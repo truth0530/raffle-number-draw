@@ -1,0 +1,75 @@
+import { prisma, ensurePragmas } from "@/lib/prisma";
+import { checkAdmin, unauthorized } from "@/lib/auth";
+import { getState, Scene } from "@/lib/state";
+import { writeFile, mkdir } from "fs/promises";
+import path from "path";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+// 리셋(파괴적): 스냅샷 먼저 → 전량 삭제 → 씬 QR 초기화.
+// 안전장치: 토큰 + confirm:"RESET" + 라이브 잠금(DRAWING/WINNERS 중엔 force:true 필요).
+export async function POST(req: Request) {
+  await ensurePragmas();
+  if (!checkAdmin(req)) return unauthorized();
+
+  let body: { confirm?: unknown; force?: unknown };
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ ok: false, error: "bad_request" }, { status: 400 });
+  }
+
+  if (body.confirm !== "RESET") {
+    return Response.json({ ok: false, error: "confirm_required" }, { status: 400 });
+  }
+
+  const state = await getState();
+  const live = state.scene === "DRAWING" || state.scene === "WINNERS";
+  if (live && body.force !== true) {
+    // 라이브(추첨 중/후) 오리셋 방지: 명시적 force 필요.
+    return Response.json(
+      { ok: false, error: "live_locked", scene: state.scene as Scene },
+      { status: 423 }
+    );
+  }
+
+  // 1) 스냅샷 먼저 — 데이터가 진짜로 소실되지 않게.
+  const [entries, winners, collisions] = await Promise.all([
+    prisma.entry.findMany(),
+    prisma.winner.findMany({ include: { entry: true, draw: true } }),
+    prisma.collisionLog.findMany(),
+  ]);
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const dir = path.join(process.cwd(), "backups");
+  await mkdir(dir, { recursive: true });
+  const file = path.join(dir, `reset-${stamp}.json`);
+  await writeFile(
+    file,
+    JSON.stringify(
+      { at: new Date().toISOString(), scene: state.scene, entries, winners, collisions },
+      null,
+      2
+    ),
+    "utf8"
+  );
+
+  // 2) 전량 삭제 + 씬 초기화 (원자적).
+  await prisma.$transaction([
+    prisma.winner.deleteMany(),
+    prisma.draw.deleteMany(),
+    prisma.entry.deleteMany(),
+    prisma.collisionLog.deleteMany(),
+    prisma.eventState.update({
+      where: { id: 1 },
+      data: { scene: "QR", frozenAt: null, qrVisible: true, qrSize: "half", qrCorner: "center", corkOpen: false, shakeAt: null, tiltDeg: 0 },
+    }),
+  ]);
+
+  return Response.json({
+    ok: true,
+    snapshot: path.basename(file),
+    cleared: { entries: entries.length, winners: winners.length },
+  });
+}

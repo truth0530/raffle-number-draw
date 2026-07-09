@@ -1,0 +1,80 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// 현장 번호 추첨(이름·QR 불필요). 단일 행(id=1).
+model NumberDraw {
+  id        Int      @id @default(1)
+  rangeMax  Int      @default(400) // 배부한 번호 최대값(1~rangeMax)
+  drawCount Int      @default(20)  // 뽑을 개수
+  revealMs  Int      @default(1000) // 1개씩 정착하는 간격(ms)
+  drawing   Boolean  @default(false) // 순차 추첨 진행 중
+  numbers   String   @default("[]") // JSON: [{ "n", "added", "status" }]
+  removed   String   @default("[]") // JSON: 제거된 번호(재추첨 제외)
+  updatedAt DateTime @updatedAt
+}
+
+// 응모자 1명 = 1행. 이름+뒤4자리로 중복 제거.
+model Entry {
+  id        String   @id @default(cuid())
+  name      String
+  last4     String
+  ip        String?
+  createdAt DateTime @default(now())
+  winner    Winner?
+
+  @@unique([name, last4])
+  @@index([createdAt])
+}
+
+// 추첨 1회 = 1배치. "3명 더 추첨"은 새 배치로 append.
+model Draw {
+  id        String   @id @default(cuid())
+  batch     Int      @unique
+  count     Int
+  createdAt DateTime @default(now())
+  winners   Winner[]
+}
+
+// 당첨 확정만 기록. entryId unique = 한 사람은 평생 한 번만 당첨(추가추첨 중복 원천 차단).
+model Winner {
+  id      String @id @default(cuid())
+  drawId  String
+  draw    Draw   @relation(fields: [drawId], references: [id], onDelete: Cascade)
+  entryId String @unique
+  entry   Entry  @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  rank    Int
+
+  @@index([drawId])
+}
+
+// 무대의 유일한 진실(단일 행, id=1).
+model EventState {
+  id        Int       @id @default(1)
+  scene     String    @default("QR") // QR | COLLECTING | FROZEN | DRAWING | WINNERS
+  frozenAt  DateTime?
+  // QR 표시 제어(관리자 실시간 조절, 무대가 따라감)
+  qrVisible Boolean   @default(true)
+  qrSize    String    @default("half") // half | medium | small
+  qrCorner  String    @default("center") // center | tr
+  // 추첨 항아리 제어
+  corkOpen     Boolean   @default(false) // 코르크(열려야 탈락 시작)
+  shakeAt      DateTime? // 흔들기 트리거(갱신 시각)
+  drawDuration Int       @default(30)    // 전체 탈락 소요시간(초) — 이 시간에 20명만 남음
+  tiltDeg      Float     @default(0)     // 관리자 병 기울기(도)
+  updatedAt    DateTime  @updatedAt
+}
+
+// dedup 충돌 기록: 흔한 이름+뒤4자리가 실제로 겹친 경우 당일 수동 판별용.
+model CollisionLog {
+  id        String   @id @default(cuid())
+  name      String
+  last4     String
+  ip        String?
+  createdAt DateTime @default(now())
+}

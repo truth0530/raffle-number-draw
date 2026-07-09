@@ -1,0 +1,30 @@
+/node_modules
+/.next
+/out
+*.tsbuildinfo
+next-env.d.ts
+
+# env & secrets
+.env
+.env*.local
+
+# sqlite db & snapshots
+/prisma/*.db
+/prisma/*.db-journal
+/prisma/*.db-wal
+/prisma/*.db-shm
+/backups/*.json
+
+.DS_Store
+
+# 내부 개발 문서(공개 저장소 제외 — 로컬 보존)
+/POSTMORTEM.md
+/CRITIQUE_matterjs.md
+/BUBBLE_FEATURE_SHELVED.md
+/LEDGER.md
+/NUMBER_DRAW.md
+
+# playwright / 스크린샷
+/.playwright-mcp
+*.jpeg
+*.png
