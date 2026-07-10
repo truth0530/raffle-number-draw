@@ -7,11 +7,12 @@ type State = {
   scene: string;
   entryCount: number;
   rehearsalCount?: number;
+  collisionCount?: number;
   qr?: { visible: boolean; size: string; corner: string };
   cork?: boolean;
   drawDuration?: number;
   tiltDeg?: number;
-  winners: { rank: number }[];
+  winners: { entryId: string; name: string; last4: string; rank: number; batch: number }[];
 };
 
 // 서버 에러 코드 → 관리자가 바로 이해할 문구.
@@ -200,6 +201,11 @@ export default function ControlPage() {
         </div>
         <div>응모 인원: <b>{state?.entryCount ?? 0}</b>명</div>
         <div>확정 당첨: <b>{winnerCount}</b>명</div>
+        {(state?.collisionCount ?? 0) > 0 && (
+          <div style={{ color: "#fbbf24", fontSize: 14 }}>
+            이름+뒤4자리 중복 시도 {state?.collisionCount}건 — 당첨자 확인 분쟁 시 참고
+          </div>
+        )}
       </div>
 
       {/* 리허설 데이터 잔존 경고: 본행사에 가상 인물이 당첨되는 사고 방지 */}
@@ -345,6 +351,27 @@ export default function ControlPage() {
                 당첨자 명단 공개
               </button>
             )}
+
+            {/* 명단 백업: DB 장애 대비 + 사회자 호명용/인쇄용. 서버 불필요(폴링된 명단 사용). */}
+            <button
+              style={btn("#1e3a5f")}
+              onClick={() => {
+                const ws = state?.winners ?? [];
+                if (ws.length === 0) return setMsg("아직 당첨자가 없습니다.");
+                const rows = [["순번", "이름", "뒤4자리", "배치"], ...ws.map((w) => [w.rank, w.name, w.last4, w.batch])];
+                // BOM: 엑셀에서 한글 깨짐 방지.
+                const csv = "﻿" + rows.map((r) => r.join(",")).join("\r\n");
+                const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = `당첨명단_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.csv`;
+                a.click();
+                URL.revokeObjectURL(a.href);
+                setMsg(`당첨 명단 ${ws.length}명 다운로드됨`);
+              }}
+            >
+              당첨 명단 다운로드 (CSV, {winnerCount}명)
+            </button>
           </>
         )}
       </div>

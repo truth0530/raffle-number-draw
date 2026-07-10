@@ -176,29 +176,44 @@ export default function StagePage() {
         </div>
       )}
 
-      {scene === "WINNERS" && (
-        <Center>
-          <h1 style={{ fontSize: 56, fontWeight: 900, color: "#ffd24a", marginBottom: 8 }}>
-            당첨을 축하드립니다
-          </h1>
-          <p style={{ opacity: 0.6, marginBottom: 24 }}>총 {winners.length}명</p>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: `repeat(auto-fit, minmax(${winners.length > 24 ? 180 : 220}px, 1fr))`,
-              gap: 14,
-              width: "min(1200px, 92vw)",
-            }}
-          >
-            {winners.map((w) => (
-              <div key={`${w.name}-${w.last4}-${w.rank}`} style={winnerCard}>
-                <div style={{ fontSize: 30, fontWeight: 800 }}>{w.name}</div>
-                <div style={{ fontSize: 24, color: "#ffd24a", letterSpacing: 3 }}>{w.last4}</div>
-              </div>
-            ))}
-          </div>
-        </Center>
-      )}
+      {scene === "WINNERS" && (() => {
+        // 추가추첨(2차 이후 배치) 당첨자는 사회자가 구분해 호명할 수 있게 강조.
+        const maxBatch = winners.reduce((m, w) => Math.max(m, w.batch), 1);
+        return (
+          <Center>
+            <h1 style={{ fontSize: 56, fontWeight: 900, color: "#ffd24a", marginBottom: 8 }}>
+              당첨을 축하드립니다
+            </h1>
+            <p style={{ opacity: 0.6, marginBottom: 24 }}>총 {winners.length}명</p>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: `repeat(auto-fit, minmax(${winners.length > 24 ? 180 : 220}px, 1fr))`,
+                gap: 14,
+                width: "min(1200px, 92vw)",
+              }}
+            >
+              {winners.map((w) => {
+                const isNew = maxBatch > 1 && w.batch === maxBatch;
+                return (
+                  <div
+                    key={`${w.entryId}-${w.rank}`}
+                    style={{ ...winnerCard, position: "relative", ...(isNew ? { border: "2px solid #ffd24a", boxShadow: "0 0 18px rgba(255,210,74,0.35)" } : {}) }}
+                  >
+                    {isNew && (
+                      <div style={{ position: "absolute", top: -10, right: -6, fontSize: 13, fontWeight: 800, background: "#ffd24a", color: "#1a1400", padding: "2px 8px", borderRadius: 8 }}>
+                        추가
+                      </div>
+                    )}
+                    <div style={{ fontSize: 30, fontWeight: 800 }}>{w.name}</div>
+                    <div style={{ fontSize: 24, color: "#ffd24a", letterSpacing: 3 }}>{w.last4}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </Center>
+        );
+      })()}
 
       {/* plain 폴백: DRAWING 연출 대신 명단만 */}
       {plain && scene === "DRAWING" && (

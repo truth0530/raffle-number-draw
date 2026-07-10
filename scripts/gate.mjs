@@ -54,6 +54,7 @@ async function main() {
 
   s = await api("/api/state");
   check("중복 제거 후 응모 30명", s.json?.entryCount === 30, String(s.json?.entryCount));
+  check("충돌 시도 1건 카운트 노출(분쟁 대응)", s.json?.collisionCount === 1, String(s.json?.collisionCount));
 
   // 2.5) 공개 응모 목록에 개인정보(last4) 미노출
   const ent = await api("/api/entries");

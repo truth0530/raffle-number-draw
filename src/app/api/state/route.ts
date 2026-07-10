@@ -10,6 +10,8 @@ export async function GET() {
   const entryCount = await prisma.entry.count();
   // 리허설(가상) 응모 잔존 감시 — 본행사에 가상 인물이 당첨되는 사고 방지용 경고 데이터.
   const rehearsalCount = await prisma.entry.count({ where: { ip: "rehearsal" } });
+  // 이름+뒤4자리 충돌 시도 건수 — 당첨자 확인 분쟁("저도 응모했는데요") 대응 단서.
+  const collisionCount = await prisma.collisionLog.count();
 
   const reveal = REVEAL_SCENES.includes(state.scene as Scene);
 
@@ -33,6 +35,7 @@ export async function GET() {
     scene: state.scene,
     entryCount,
     rehearsalCount,
+    collisionCount,
     frozenAt: state.frozenAt,
     qr: { visible: state.qrVisible, size: state.qrSize, corner: state.qrCorner },
     cork: state.corkOpen,

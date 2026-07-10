@@ -107,6 +107,11 @@ export default function EnterPage() {
         <button type="submit" disabled={busy} style={buttonStyle(busy)}>
           {busy ? "전송 중…" : "응모하기"}
         </button>
+
+        <p style={{ fontSize: 12, opacity: 0.5, textAlign: "center", lineHeight: 1.6 }}>
+          입력하신 정보(이름·전화 뒤 4자리)는 본 경품 추첨 운영과 당첨자 확인에만
+          사용되며, 행사 종료 후 지체 없이 파기됩니다.
+        </p>
       </form>
     </main>
   );
