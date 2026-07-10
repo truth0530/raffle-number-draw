@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#0a0a0f"/>
+  <!-- 유리병 -->
+  <path d="M24 10h16v6c6 3 9 9 9 16 0 11-8 20-17 20s-17-9-17-20c0-7 3-13 9-16v-6z"
+        fill="none" stroke="#8f7bff" stroke-width="3" stroke-linejoin="round"/>
+  <!-- 버블 -->
+  <circle cx="26" cy="40" r="5.5" fill="#ff6fae"/>
+  <circle cx="37" cy="43" r="5" fill="#4aa8ff"/>
+  <circle cx="33" cy="31" r="4.5" fill="#ffd24a"/>
+</svg>

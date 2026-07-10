@@ -66,11 +66,13 @@ export default function NumbersAdmin() {
   }, [update]);
 
   function openShow() {
-    window.open(
+    const w = window.open(
       "/numbers/show",
       "raffle_show",
       "popup=yes,width=1400,height=900,left=120,top=80,toolbar=no,menubar=no,location=no,status=no,scrollbars=no,resizable=yes"
     );
+    // 팝업 차단 시 무반응으로 끝나지 않게.
+    if (!w) alert("팝업이 차단되었습니다. 브라우저 팝업을 허용하거나 주소창에 /numbers/show 를 직접 입력하세요.");
   }
 
   const numbers = state.numbers;

@@ -29,6 +29,15 @@ function fetchT(url: string, ms = 4000): Promise<Response> {
   return fetch(url, { cache: "no-store", signal: c.signal }).finally(() => clearTimeout(t));
 }
 
+// 대형 화면 개인정보 최소화: 이름 가운데를 가린다(홍*동). 뒤4자리와 조합돼도
+// 개인 특정이 어렵게. 사회자 호명용 전체 이름은 리모컨 CSV에만.
+function maskName(n: string): string {
+  const c = [...n];
+  if (c.length <= 1) return n;
+  if (c.length === 2) return c[0] + "＊";
+  return c[0] + "＊".repeat(c.length - 2) + c[c.length - 1];
+}
+
 export default function StageView({ mode }: { mode: "live" | "test" }) {
   const [state, setState] = useState<State | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -36,7 +45,9 @@ export default function StageView({ mode }: { mode: "live" | "test" }) {
   const [qrUrl, setQrUrl] = useState<string>("");
   const [plain, setPlain] = useState(false);
   const [shakeSeq, setShakeSeq] = useState(0);
+  const [offline, setOffline] = useState(false);
   const lastShakeAt = useRef<string | null>(null);
+  const failCount = useRef(0);
   const stopped = useRef(false);
 
   useEffect(() => {
@@ -110,8 +121,13 @@ export default function StageView({ mode }: { mode: "live" | "test" }) {
             }
           }
           if (eData.ok) setEntries(eData.entries);
+          // 연결 회복 → 배지 해제
+          failCount.current = 0;
+          setOffline(false);
         } catch {
-          /* ignore */
+          // 연속 3회(3초+) 실패 시 끊김 배지 — 조용히 멈춘 무대 방지.
+          failCount.current += 1;
+          if (failCount.current >= 3) setOffline(true);
         }
         await new Promise((r) => setTimeout(r, 1000));
       }
@@ -170,6 +186,12 @@ export default function StageView({ mode }: { mode: "live" | "test" }) {
           {qrState.size !== "small" && (
             <div style={{ textAlign: "center", marginTop: 10, fontSize: qrState.size === "half" ? 24 : 16, fontWeight: 700, textShadow: "0 2px 12px #000" }}>
               {mode === "test" ? "테스트 QR · 같은 컴퓨터의 창만 반영" : "QR을 스캔해 응모하세요"}
+              {/* QR을 못 찍는 폰을 위한 직접 입력 주소 */}
+              {mode !== "test" && qrUrl && (
+                <div style={{ marginTop: 6, fontSize: qrState.size === "half" ? 20 : 13, fontWeight: 600, opacity: 0.75, letterSpacing: 0.5 }}>
+                  또는 주소 입력: <span style={{ color: "#a5b4fc" }}>{qrUrl.replace(/^https?:\/\//, "")}</span>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -193,6 +215,12 @@ export default function StageView({ mode }: { mode: "live" | "test" }) {
       {scene === "WINNERS" && (() => {
         // 추가추첨(2차 이후 배치) 당첨자는 사회자가 구분해 호명할 수 있게 강조.
         const maxBatch = winners.reduce((m, w) => Math.max(m, w.batch), 1);
+        // 배치 내 순번 기준 순차 등장 — 명단이 한 방에 뜨지 않고 긴장감 있게 공개된다.
+        // (추가추첨 배치는 자기 배치의 0번부터 다시 스태거)
+        const batchStart = new Map<number, number>();
+        winners.forEach((w, i) => {
+          if (!batchStart.has(w.batch)) batchStart.set(w.batch, i);
+        });
         return (
           <Center>
             <h1 style={{ fontSize: 56, fontWeight: 900, color: "#ffd24a", marginBottom: 8 }}>
@@ -207,24 +235,33 @@ export default function StageView({ mode }: { mode: "live" | "test" }) {
                 width: "min(1200px, 92vw)",
               }}
             >
-              {winners.map((w) => {
+              {winners.map((w, i) => {
                 const isNew = maxBatch > 1 && w.batch === maxBatch;
+                const delay = Math.min((i - (batchStart.get(w.batch) ?? 0)) * 0.35, 12);
                 return (
                   <div
                     key={`${w.entryId}-${w.rank}`}
-                    style={{ ...winnerCard, position: "relative", ...(isNew ? { border: "2px solid #ffd24a", boxShadow: "0 0 18px rgba(255,210,74,0.35)" } : {}) }}
+                    style={{
+                      ...winnerCard,
+                      position: "relative",
+                      animation: `pop .5s ease ${delay}s both`,
+                      ...(isNew ? { border: "2px solid #ffd24a", boxShadow: "0 0 18px rgba(255,210,74,0.35)" } : {}),
+                    }}
                   >
                     {isNew && (
                       <div style={{ position: "absolute", top: -10, right: -6, fontSize: 13, fontWeight: 800, background: "#ffd24a", color: "#1a1400", padding: "2px 8px", borderRadius: 8 }}>
                         추가
                       </div>
                     )}
-                    <div style={{ fontSize: 30, fontWeight: 800 }}>{w.name}</div>
+                    <div style={{ fontSize: 30, fontWeight: 800 }}>{maskName(w.name)}</div>
                     <div style={{ fontSize: 24, color: "#ffd24a", letterSpacing: 3 }}>{w.last4}</div>
                   </div>
                 );
               })}
             </div>
+            <p style={{ opacity: 0.45, marginTop: 20, fontSize: 16 }}>
+              내 폰의 응모 완료 화면에서도 결과를 확인할 수 있습니다
+            </p>
           </Center>
         );
       })()}
@@ -235,10 +272,17 @@ export default function StageView({ mode }: { mode: "live" | "test" }) {
           <h1 style={{ fontSize: 40, fontWeight: 800 }}>추첨 결과</h1>
           <ul style={{ marginTop: 16, fontSize: 24, columns: 2, listStyle: "none" }}>
             {winners.map((w) => (
-              <li key={w.rank}>{w.name} · {w.last4}</li>
+              <li key={w.rank}>{maskName(w.name)} · {w.last4}</li>
             ))}
           </ul>
         </Center>
+      )}
+
+      {/* 네트워크 끊김 배지 — 조용히 멈춘 화면을 진행자가 즉시 알아채게 */}
+      {offline && (
+        <div style={{ position: "absolute", top: 14, right: 14, zIndex: 30, padding: "8px 16px", borderRadius: 10, background: "rgba(127,29,29,0.92)", border: "1px solid #ef4444", fontSize: 15, fontWeight: 800 }}>
+          ⚠ 연결 끊김 — 재연결 시도 중
+        </div>
       )}
 
       {/* 테스트 모드 워터마크 — 실제 무대와 절대 혼동하지 않게 */}

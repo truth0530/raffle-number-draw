@@ -59,6 +59,8 @@ export default function ControlView({ mode }: { mode: "live" | "test" }) {
   const [drawN, setDrawN] = useState("20");
   const [durInput, setDurInput] = useState("30");
   const [seedN, setSeedN] = useState("20");
+  const [offline, setOffline] = useState(false);
+  const failCount = useRef(0);
   const stopped = useRef(false);
   // 요청 잠금: 버튼 연타로 추첨이 두 번 나가는 사고(당첨 40명) 방지.
   const inFlight = useRef(false);
@@ -89,8 +91,12 @@ export default function ControlView({ mode }: { mode: "live" | "test" }) {
             const data = await res.json();
             if (data.ok) setState(data);
           }
+          failCount.current = 0;
+          setOffline(false);
         } catch {
-          /* ignore */
+          // 연속 3회(3초+) 실패 = 조작 불능 상태 — 배지로 즉시 알림.
+          failCount.current += 1;
+          if (failCount.current >= 3) setOffline(true);
         }
         await new Promise((r) => setTimeout(r, 1000));
       }
@@ -156,11 +162,14 @@ export default function ControlView({ mode }: { mode: "live" | "test" }) {
 
   // 무대(프로젝터) 창 — 리모컨에서 연다. 관리자가 /stage 주소를 외울 필요 없음.
   function openStage() {
-    window.open(
-      isTest ? "/test/stage" : "/stage",
+    const path = isTest ? "/test/stage" : "/stage";
+    const w = window.open(
+      path,
       "raffle_stage",
       "popup=yes,width=1280,height=800,left=80,top=60,toolbar=no,menubar=no,location=no,status=no"
     );
+    // 팝업 차단 시 무반응으로 끝나지 않게 — 원인과 대안을 즉시 안내.
+    if (!w) setMsg(`팝업이 차단되었습니다. 브라우저 팝업을 허용하거나 주소창에 ${path} 를 직접 입력하세요.`);
   }
 
   // 추첨 결과 보고: 응모 인원이 부족하면 "완료"로 뭉개지 않고 명시적으로 알린다.
@@ -251,6 +260,13 @@ export default function ControlView({ mode }: { mode: "live" | "test" }) {
         <p style={{ fontSize: 12, opacity: 0.55, lineHeight: 1.5 }}>
           이 컴퓨터 안에서만 동작하는 연습용 — 실제 행사 데이터에 영향 없음.
         </p>
+      )}
+
+      {/* 네트워크 끊김 — 리모컨 조작이 안 먹는 상태를 즉시 알림 */}
+      {offline && (
+        <div style={{ padding: "9px 12px", borderRadius: 10, background: "rgba(127,29,29,0.9)", border: "1px solid #ef4444", fontSize: 13.5, fontWeight: 800 }}>
+          ⚠ 서버 연결 끊김 — 재연결 시도 중 (조작이 반영되지 않을 수 있음)
+        </div>
       )}
 
       {/* 진행 단계 스테퍼 + 핵심 숫자 */}

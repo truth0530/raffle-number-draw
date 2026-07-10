@@ -71,13 +71,17 @@ export async function POST(req: Request) {
   }
 
   try {
-    await prisma.entry.create({ data: { name, last4, ip } });
-    return Response.json({ ok: true, duplicate: false });
+    const created = await prisma.entry.create({ data: { name, last4, ip } });
+    // entryId: 응모자 폰이 자기 당첨 여부를 확인(응모 완료 화면)하는 열쇠.
+    return Response.json({ ok: true, duplicate: false, entryId: created.id });
   } catch (e: unknown) {
     // P2002 = unique(name,last4) 위반 → 이미 응모로 간주(멱등). 충돌은 로그로 남겨 당일 수동 판별.
     if (e && typeof e === "object" && "code" in e && (e as { code?: string }).code === "P2002") {
       await prisma.collisionLog.create({ data: { name, last4, ip } }).catch(() => {});
-      return Response.json({ ok: true, duplicate: true });
+      const existing = await prisma.entry
+        .findUnique({ where: { name_last4: { name, last4 } }, select: { id: true } })
+        .catch(() => null);
+      return Response.json({ ok: true, duplicate: true, entryId: existing?.id ?? null });
     }
     return Response.json({ ok: false, error: "server_error" }, { status: 500 });
   }

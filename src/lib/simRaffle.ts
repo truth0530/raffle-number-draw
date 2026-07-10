@@ -162,14 +162,16 @@ export async function simPost(path: string, body: Json): Promise<Res> {
     if (name.length < 1 || name.length > 40) return err(422, "invalid_name");
     if (last4.length !== 4) return err(422, "invalid_last4");
     if (!OPEN_SCENES.includes(db.scene)) return err(409, "closed");
-    if (db.entries.some((e) => e.name === name && e.last4 === last4)) {
+    const dup = db.entries.find((e) => e.name === name && e.last4 === last4);
+    if (dup) {
       db.collisions++;
       save(db);
-      return ok({ duplicate: true });
+      return ok({ duplicate: true, entryId: dup.id });
     }
-    db.entries.push({ id: uid(), name, last4, ip: "test", createdAt: new Date().toISOString() });
+    const id = uid();
+    db.entries.push({ id, name, last4, ip: "test", createdAt: new Date().toISOString() });
     save(db);
-    return ok({ duplicate: false });
+    return ok({ duplicate: false, entryId: id });
   }
 
   if (path === "/api/scene") {
