@@ -42,18 +42,25 @@ export async function POST(req: Request) {
   ]);
 
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const dir = path.join(process.cwd(), "backups");
-  await mkdir(dir, { recursive: true });
-  const file = path.join(dir, `reset-${stamp}.json`);
-  await writeFile(
-    file,
-    JSON.stringify(
-      { at: new Date().toISOString(), scene: state.scene, entries, winners, collisions },
-      null,
-      2
-    ),
-    "utf8"
+  const payload = JSON.stringify(
+    { at: new Date().toISOString(), scene: state.scene, entries, winners, collisions },
+    null,
+    2
   );
+  // 스냅샷 파일은 best-effort: Vercel 서버리스는 cwd가 읽기전용이라 /tmp로 폴백.
+  // 파일 실패가 리셋을 막으면 안 된다(스냅샷 요약은 응답에 항상 포함).
+  let file = "(file-skipped)";
+  for (const dir of [path.join(process.cwd(), "backups"), "/tmp/raffle-backups"]) {
+    try {
+      await mkdir(dir, { recursive: true });
+      const f = path.join(dir, `reset-${stamp}.json`);
+      await writeFile(f, payload, "utf8");
+      file = f;
+      break;
+    } catch {
+      /* 다음 경로 시도 */
+    }
+  }
 
   // 2) 전량 삭제 + 씬 초기화 (원자적).
   await prisma.$transaction([
