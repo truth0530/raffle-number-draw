@@ -55,6 +55,16 @@ async function main() {
   s = await api("/api/state");
   check("중복 제거 후 응모 30명", s.json?.entryCount === 30, String(s.json?.entryCount));
 
+  // 2.5) 공개 응모 목록에 개인정보(last4) 미노출
+  const ent = await api("/api/entries");
+  const entList = ent.json?.entries ?? [];
+  check("응모 목록 30명 제공", entList.length === 30, String(entList.length));
+  check(
+    "응모 목록에 last4 미노출(개인정보)",
+    entList.every((e) => !("last4" in e) && typeof e.id === "string" && typeof e.name === "string"),
+    JSON.stringify(entList[0])
+  );
+
   // 3) 잘못된 입력 거부
   const badLast4 = await api("/api/enter", { method: "POST", body: { name: "홍길동", last4: "12" } });
   check("뒤4자리 오류 422", badLast4.status === 422, String(badLast4.status));
@@ -90,6 +100,11 @@ async function main() {
   s = await api("/api/state");
   check("추첨 후 씬 DRAWING", s.json?.scene === "DRAWING", s.json?.scene);
   check("공개 씬에서 winners 20명 노출", (s.json?.winners ?? []).length === 20, String(s.json?.winners?.length));
+  check(
+    "winners 에 entryId 포함(무대 버블 매칭용)",
+    (s.json?.winners ?? []).every((w) => typeof w.entryId === "string" && w.entryId.length > 0),
+    JSON.stringify(s.json?.winners?.[0])
+  );
 
   // 9) 추가 추첨 3명 → 총 23명, 기존과 미중복
   const d2 = await api("/api/draw", { method: "POST", body: { count: 3 }, token: TOKEN });
@@ -114,7 +129,13 @@ async function main() {
   const liveLock = await api("/api/reset", { method: "POST", body: { confirm: "RESET" }, token: TOKEN });
   check("라이브(WINNERS) 리셋 잠금 423", liveLock.status === 423, String(liveLock.status));
   const forced = await api("/api/reset", { method: "POST", body: { confirm: "RESET", force: true }, token: TOKEN });
-  check("force 리셋 성공 + 스냅샷", forced.json?.ok === true && !!forced.json?.snapshot, JSON.stringify(forced.json));
+  check("force 리셋 성공 + 스냅샷", forced.json?.ok === true && !!forced.json?.snapshot, JSON.stringify(forced.json?.snapshot));
+  check(
+    "리셋 응답에 스냅샷 데이터 포함(브라우저 백업용)",
+    (forced.json?.snapshotData?.entries ?? []).length === 30 &&
+      (forced.json?.snapshotData?.winners ?? []).length === 23,
+    `entries=${forced.json?.snapshotData?.entries?.length} winners=${forced.json?.snapshotData?.winners?.length}`
+  );
 
   s = await api("/api/state");
   check("리셋 후 씬 QR", s.json?.scene === "QR", s.json?.scene);

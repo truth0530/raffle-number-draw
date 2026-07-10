@@ -1,4 +1,4 @@
-import { prisma, ensurePragmas } from "@/lib/prisma";
+import { prisma } from "@/lib/prisma";
 import { getState, OPEN_SCENES, Scene } from "@/lib/state";
 
 export const runtime = "nodejs";
@@ -12,6 +12,12 @@ const hits = new Map<string, number[]>();
 
 function rateLimited(ip: string): boolean {
   const now = Date.now();
+  // 무한 성장 방지: 커지면 만료된 IP 버킷을 일괄 정리.
+  if (hits.size > 2000) {
+    for (const [k, v] of hits) {
+      if (!v.some((t) => now - t < WINDOW_MS)) hits.delete(k);
+    }
+  }
   const arr = (hits.get(ip) ?? []).filter((t) => now - t < WINDOW_MS);
   arr.push(now);
   hits.set(ip, arr);
@@ -31,8 +37,6 @@ function normalizeLast4(raw: unknown): string | null {
 }
 
 export async function POST(req: Request) {
-  await ensurePragmas();
-
   const ip =
     req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
     req.headers.get("x-real-ip") ||

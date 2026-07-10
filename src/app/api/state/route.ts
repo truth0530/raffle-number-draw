@@ -1,4 +1,4 @@
-import { prisma, ensurePragmas } from "@/lib/prisma";
+import { prisma } from "@/lib/prisma";
 import { getState, REVEAL_SCENES, Scene } from "@/lib/state";
 
 export const runtime = "nodejs";
@@ -6,19 +6,19 @@ export const dynamic = "force-dynamic";
 
 // 무대·리모컨이 폴링하는 공개 상태. 당첨자 명단은 공개 씬(DRAWING/WINNERS)에서만 포함.
 export async function GET() {
-  await ensurePragmas();
   const state = await getState();
   const entryCount = await prisma.entry.count();
 
   const reveal = REVEAL_SCENES.includes(state.scene as Scene);
 
-  let winners: { name: string; last4: string; rank: number; batch: number }[] = [];
+  let winners: { entryId: string; name: string; last4: string; rank: number; batch: number }[] = [];
   if (reveal) {
     const rows = await prisma.winner.findMany({
       include: { entry: true, draw: true },
       orderBy: { rank: "asc" },
     });
     winners = rows.map((w) => ({
+      entryId: w.entryId,
       name: w.entry.name,
       last4: w.entry.last4,
       rank: w.rank,

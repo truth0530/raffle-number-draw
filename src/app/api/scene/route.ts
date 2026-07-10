@@ -1,4 +1,4 @@
-import { prisma, ensurePragmas } from "@/lib/prisma";
+import { prisma } from "@/lib/prisma";
 import { checkAdmin, unauthorized } from "@/lib/auth";
 import { getState, canTransition, SCENES, Scene } from "@/lib/state";
 
@@ -7,7 +7,6 @@ export const dynamic = "force-dynamic";
 
 // 씬 전이(관리자 전용). 상태머신이 순서를 강제.
 export async function POST(req: Request) {
-  await ensurePragmas();
   if (!checkAdmin(req)) return unauthorized();
 
   let body: { to?: unknown };

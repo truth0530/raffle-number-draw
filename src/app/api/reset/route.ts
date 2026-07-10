@@ -1,4 +1,4 @@
-import { prisma, ensurePragmas } from "@/lib/prisma";
+import { prisma } from "@/lib/prisma";
 import { checkAdmin, unauthorized } from "@/lib/auth";
 import { getState, Scene } from "@/lib/state";
 import { writeFile, mkdir } from "fs/promises";
@@ -10,7 +10,6 @@ export const dynamic = "force-dynamic";
 // 리셋(파괴적): 스냅샷 먼저 → 전량 삭제 → 씬 QR 초기화.
 // 안전장치: 토큰 + confirm:"RESET" + 라이브 잠금(DRAWING/WINNERS 중엔 force:true 필요).
 export async function POST(req: Request) {
-  await ensurePragmas();
   if (!checkAdmin(req)) return unauthorized();
 
   let body: { confirm?: unknown; force?: unknown };
@@ -42,11 +41,8 @@ export async function POST(req: Request) {
   ]);
 
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const payload = JSON.stringify(
-    { at: new Date().toISOString(), scene: state.scene, entries, winners, collisions },
-    null,
-    2
-  );
+  const snapshot = { at: new Date().toISOString(), scene: state.scene, entries, winners, collisions };
+  const payload = JSON.stringify(snapshot, null, 2);
   // 스냅샷 파일은 best-effort: Vercel 서버리스는 cwd가 읽기전용이라 /tmp로 폴백.
   // 파일 실패가 리셋을 막으면 안 된다(스냅샷 요약은 응답에 항상 포함).
   let file = "(file-skipped)";
@@ -74,9 +70,12 @@ export async function POST(req: Request) {
     }),
   ]);
 
+  // 스냅샷 원본을 응답에도 실어 보낸다 — 서버리스에선 /tmp 파일이 곧 증발하므로
+  // 관리자 브라우저가 이걸 받아 로컬 파일로 저장하는 것이 실질적 백업이다.
   return Response.json({
     ok: true,
     snapshot: path.basename(file),
+    snapshotData: snapshot,
     cleared: { entries: entries.length, winners: winners.length },
   });
 }

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import JarCanvas, { Entry } from "./JarCanvas";
 
-type Winner = { name: string; last4: string; rank: number; batch: number };
+type Winner = { entryId: string; name: string; last4: string; rank: number; batch: number };
 type QrState = { visible: boolean; size: string; corner: string };
 type State = {
   ok: boolean;
@@ -68,7 +68,8 @@ export default function StagePage() {
 
   const scene = state?.scene ?? "QR";
   const winners = state?.winners ?? [];
-  const winnerKeys = new Set(winners.map((w) => `${w.name}|${w.last4}`));
+  // 버블 매칭은 entryId로(이름·전화가 화면 매칭에 불필요 — /api/entries 에서 last4 제거 가능해짐).
+  const winnerKeys = new Set(winners.map((w) => w.entryId));
   const qrState = state?.qr ?? { visible: true, size: "half", corner: "center" };
 
   const showJar =

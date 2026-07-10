@@ -1,4 +1,5 @@
-import { prisma, ensurePragmas } from "@/lib/prisma";
+import { randomInt } from "crypto";
+import { prisma } from "@/lib/prisma";
 import { checkAdmin, unauthorized } from "@/lib/auth";
 import { getState, Scene } from "@/lib/state";
 
@@ -8,9 +9,10 @@ export const dynamic = "force-dynamic";
 // 추첨 가능한 씬: 마감 후.
 const DRAW_SCENES: Scene[] = ["FROZEN", "DRAWING", "WINNERS"];
 
+// CSPRNG Fisher–Yates: 경품 추첨의 공정성 시비를 원천 차단.
 function shuffle<T>(arr: T[]): T[] {
   for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = randomInt(i + 1);
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
@@ -18,7 +20,6 @@ function shuffle<T>(arr: T[]): T[] {
 
 // N명 서버 확정. 이미 당첨된 사람은 제외(추가추첨 중복 차단). 원자적 트랜잭션.
 export async function POST(req: Request) {
-  await ensurePragmas();
   if (!checkAdmin(req)) return unauthorized();
 
   let body: { count?: unknown };
@@ -58,11 +59,15 @@ export async function POST(req: Request) {
       data: { batch, count: picked.length },
     });
 
-    for (let i = 0; i < picked.length; i++) {
-      await tx.winner.create({
-        data: { drawId: draw.id, entryId: picked[i], rank: startRank + i + 1 },
-      });
-    }
+    // 왕복 1회로 일괄 삽입 — 원격 Postgres에서 N회 순차 INSERT는
+    // 트랜잭션 타임아웃(P2028)의 온상이라 피한다.
+    await tx.winner.createMany({
+      data: picked.map((entryId, i) => ({
+        drawId: draw.id,
+        entryId,
+        rank: startRank + i + 1,
+      })),
+    });
 
     // 첫 추첨이면 DRAWING 으로 전이(코르크는 닫힌 상태로 시작).
     if (state.scene === "FROZEN") {

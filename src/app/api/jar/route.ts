@@ -1,4 +1,4 @@
-import { prisma, ensurePragmas } from "@/lib/prisma";
+import { prisma } from "@/lib/prisma";
 import { checkAdmin, unauthorized } from "@/lib/auth";
 
 export const runtime = "nodejs";
@@ -6,7 +6,6 @@ export const dynamic = "force-dynamic";
 
 // 추첨 항아리 제어(관리자): 코르크 개폐 + 흔들기.
 export async function POST(req: Request) {
-  await ensurePragmas();
   if (!checkAdmin(req)) return unauthorized();
 
   let body: { action?: unknown };

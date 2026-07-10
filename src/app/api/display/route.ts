@@ -1,4 +1,4 @@
-import { prisma, ensurePragmas } from "@/lib/prisma";
+import { prisma } from "@/lib/prisma";
 import { checkAdmin, unauthorized } from "@/lib/auth";
 
 export const runtime = "nodejs";
@@ -10,7 +10,6 @@ const CORNERS = ["center", "tr"];
 
 // QR 표시 제어(관리자 전용): 표시여부/크기/위치.
 export async function POST(req: Request) {
-  await ensurePragmas();
   if (!checkAdmin(req)) return unauthorized();
 
   let body: { visible?: unknown; size?: unknown; corner?: unknown };

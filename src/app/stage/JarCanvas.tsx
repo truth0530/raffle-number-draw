@@ -3,7 +3,7 @@
 import Matter from "matter-js";
 import { useEffect, useRef } from "react";
 
-export type Entry = { id: string; name: string; last4: string };
+export type Entry = { id: string; name: string };
 
 type Props = {
   scene: string;
@@ -18,7 +18,6 @@ type Props = {
 type Ball = {
   id: string;
   name: string;
-  key: string;
   body: Matter.Body;
   r: number; // 시각 반지름(부드럽게 애니메이션)
   physR: number; // 물리 반지름(스폰 시 고정, 큰 변화 때만 스냅 재조정)
@@ -235,7 +234,6 @@ export default function JarCanvas({
       const b: Ball = {
         id: e.id,
         name: e.name,
-        key: `${e.name}|${e.last4}`,
         body,
         r: baseR * 0.55,
         physR: baseR,
@@ -394,7 +392,7 @@ export default function JarCanvas({
       lastNowRef.current = now;
 
       const drawing = scene === "DRAWING" || scene === "WINNERS";
-      if (scene === "QR" || scene === "COLLECTING") {
+      if (scene === "QR" || scene === "COLLECTING" || scene === "FROZEN") {
         baseRRef.current = baseRadius(entries.length);
         drawBaseRRef.current = null;
         fixedGeomRef.current = null;
@@ -449,10 +447,24 @@ export default function JarCanvas({
         }
       }
 
+      // 마감 후(FROZEN) 새로고침 복원: 유입은 QR/COLLECTING에서만 일어나므로,
+      // 무대를 늦게 열거나 새로고침하면 병이 텅 빈다 — 미등록 버블을 몸통에 직접 복원.
+      if (scene === "FROZEN") {
+        let budget = 40; // 프레임당 분할 스폰(한 번에 전부 넣으면 겹침 폭발)
+        for (const e of entries) {
+          if (budget <= 0) break;
+          if (!byId.has(e.id)) {
+            spawn(e, baseR, g, "body");
+            budget--;
+          }
+        }
+      }
+
       if (scene === "DRAWING" && drawStartRef.current === null) {
-        while (pendingRef.current.length > 0) {
-          const e = pendingRef.current.shift()!;
-          pendingIdsRef.current.delete(e.id);
+        // 대기분 + 미등록분 전부 즉시 투입(DRAWING 중 새로고침 복원 포함).
+        pendingRef.current = [];
+        pendingIdsRef.current.clear();
+        for (const e of entries) {
           if (!byId.has(e.id)) spawn(e, baseR, liveGeom(), "body");
         }
         drawBaseRRef.current = baseRRef.current;
@@ -502,7 +514,7 @@ export default function JarCanvas({
       let physLosers = 0;
       let exiting = 0;
       for (const b of balls) {
-        b.winner = winnerKeys.has(b.key);
+        b.winner = winnerKeys.has(b.id);
         if (b.phase === "phys" && !b.winner) physLosers++;
         if (b.phase === "exit") exiting++;
       }
@@ -574,8 +586,11 @@ export default function JarCanvas({
           Math.min(1, lag / Math.max(6, losersSnapRef.current * 0.08)),
           Math.min(1, Math.max(0, rawFrac - 0.9) * 3)
         );
-        const zoneY = -g.RY * (0.55 - 0.5 * relax); // 지연될수록 몸통 쪽까지 허용
-        const zoneX = g.mw * (1.8 + 4 * relax);
+        // relax=1이어도 zoneY가 -0.05RY라 몸통 깊숙이(ly>0) 얹힌 탈락자는 영원히
+        // 안 뽑히는 실측 버그 — 60% 초과 시 완주 보증 모드로 병 전체를 허용한다.
+        const overdue = rawFrac > 1.6;
+        const zoneY = overdue ? g.RY * 2 : -g.RY * (0.55 - 0.5 * relax); // 지연될수록 몸통 쪽까지 허용
+        const zoneX = overdue ? g.RX * 2 : g.mw * (1.8 + 4 * relax);
         while (pluckedRef.current < targetGone) {
           let best: Ball | null = null;
           let bestD = Infinity;

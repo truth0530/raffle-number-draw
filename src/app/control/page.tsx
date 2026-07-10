@@ -94,6 +94,45 @@ export default function ControlPage() {
     setMsg("토큰 저장됨");
   }
 
+  // 추첨 결과 보고: 응모 인원이 부족하면 "완료"로 뭉개지 않고 명시적으로 알린다.
+  const runDraw = useCallback(
+    async (count: number) => {
+      const d = await call("/api/draw", { count });
+      if (!d?.ok) return;
+      const shortfall = Number(d.shortfall ?? 0);
+      if (shortfall > 0) {
+        setMsg(`⚠ 후보 부족: 요청 ${d.requested}명 중 ${d.drawn}명만 추첨됨`);
+      } else {
+        setMsg(`추첨 완료: ${d.drawn}명`);
+      }
+    },
+    [call]
+  );
+
+  // 리셋 스냅샷을 브라우저 파일로 저장 — 서버리스에선 서버측 파일이 증발하므로
+  // 이 다운로드가 실질적인 백업이다.
+  const runReset = useCallback(
+    async (force: boolean) => {
+      const d = await call("/api/reset", { confirm: "RESET", force });
+      if (!d?.ok) return;
+      const cleared = d.cleared as { entries?: number; winners?: number } | undefined;
+      if (d.snapshotData) {
+        try {
+          const blob = new Blob([JSON.stringify(d.snapshotData, null, 2)], { type: "application/json" });
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = `raffle-snapshot-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+          a.click();
+          URL.revokeObjectURL(a.href);
+        } catch {
+          /* 다운로드 실패해도 리셋 자체는 완료 */
+        }
+      }
+      setMsg(`리셋 완료 (응모 ${cleared?.entries ?? 0}·당첨 ${cleared?.winners ?? 0} — 스냅샷 다운로드됨)`);
+    },
+    [call]
+  );
+
   const scene = state?.scene ?? "-";
   const winnerCount = state?.winners?.length ?? 0;
   const qr = state?.qr;
@@ -172,7 +211,7 @@ export default function ControlPage() {
               style={btn("#059669")}
               onClick={() => {
                 if (confirm("당첨자 20명을 추첨합니다. 병이 뒤집힙니다. 진행할까요?"))
-                  call("/api/draw", { count: 20 });
+                  runDraw(20);
               }}
             >
               추첨 시작 (20명)
@@ -224,7 +263,7 @@ export default function ControlPage() {
                 onClick={() => {
                   const n = parseInt(addN, 10);
                   if (n > 0 && confirm(`${n}명을 추가 추첨합니다. 진행할까요?`))
-                    call("/api/draw", { count: n });
+                    runDraw(n);
                 }}
               >
                 추가 추첨
@@ -270,7 +309,7 @@ export default function ControlPage() {
               confirm("정말 초기화할까요? 되돌릴 수 없습니다.")
             ) {
               const live = scene === "DRAWING" || scene === "WINNERS";
-              call("/api/reset", { confirm: "RESET", force: live });
+              runReset(live);
             }
           }}
         >
