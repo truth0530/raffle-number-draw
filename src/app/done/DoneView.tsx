@@ -75,7 +75,6 @@ export default function DoneView({ mode }: { mode: "live" | "test" }) {
   if (mine.length === 0) {
     return (
       <Wrap isTest={isTest}>
-        <div style={{ fontSize: 56 }}>🤔</div>
         <h1 style={h1}>이 폰의 응모 내역이 없습니다</h1>
         <Link href={enterHref} style={linkBtn}>응모하러 가기 →</Link>
       </Wrap>
@@ -85,7 +84,6 @@ export default function DoneView({ mode }: { mode: "live" | "test" }) {
   if (stale) {
     return (
       <Wrap isTest={isTest}>
-        <div style={{ fontSize: 56 }}>🔄</div>
         <h1 style={h1}>행사 데이터가 초기화되었습니다</h1>
         <p style={sub}>새 추첨이 시작되면 다시 응모해 주세요.</p>
         <Link
@@ -105,7 +103,6 @@ export default function DoneView({ mode }: { mode: "live" | "test" }) {
     const anyWin = results.some((r) => r.win);
     return (
       <Wrap isTest={isTest}>
-        <div style={{ fontSize: 56 }}>{anyWin ? "🎉" : "🍀"}</div>
         <h1 style={h1}>{anyWin ? "축하합니다!" : "추첨 결과"}</h1>
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 18, width: "100%", maxWidth: 340 }}>
           {results.map(({ e, win }) => (
@@ -117,16 +114,15 @@ export default function DoneView({ mode }: { mode: "live" | "test" }) {
                 display: "flex",
                 alignItems: "center",
                 gap: 10,
-                background: win ? "linear-gradient(180deg,#3d3212,#211b09)" : "#15151d",
-                border: win ? "1.5px solid #ffd24a" : "1px solid #24242f",
-                boxShadow: win ? "0 0 18px rgba(255,210,74,0.25)" : "none",
+                background: win ? "rgba(255,210,74,0.1)" : "#14141c",
+                border: win ? "1px solid rgba(255,210,74,0.6)" : "1px solid #24242f",
               }}
             >
               <span style={{ fontSize: 17, fontWeight: 800, flex: 1, textAlign: "left" }}>
                 {e.name} <span style={{ opacity: 0.5, fontSize: 14 }}>{e.last4}</span>
               </span>
               {win ? (
-                <b style={{ color: "#ffd24a", fontSize: 16 }}>당첨 🎉</b>
+                <b style={{ color: "#ffd24a", fontSize: 16 }}>당첨</b>
               ) : (
                 <span style={{ opacity: 0.55, fontSize: 14 }}>미당첨</span>
               )}
@@ -146,7 +142,6 @@ export default function DoneView({ mode }: { mode: "live" | "test" }) {
   if (scene === "DRAWING") {
     return (
       <Wrap isTest={isTest}>
-        <div style={{ fontSize: 56 }}>🎲</div>
         <h1 style={h1}>추첨이 진행 중입니다</h1>
         <p style={sub}>
           무대 화면을 봐주세요! 명단이 공개되면
@@ -160,7 +155,6 @@ export default function DoneView({ mode }: { mode: "live" | "test" }) {
   if (scene === "FROZEN") {
     return (
       <Wrap isTest={isTest}>
-        <div style={{ fontSize: 56 }}>⏳</div>
         <h1 style={h1}>응모 마감 — 곧 추첨이 시작됩니다</h1>
         <p style={sub}>총 {state?.entryCount ?? 0}명 응모 · 이 화면을 켜두면 결과가 자동 표시됩니다.</p>
         <Names mine={mine} />
@@ -171,7 +165,6 @@ export default function DoneView({ mode }: { mode: "live" | "test" }) {
   // 접수 중(QR/COLLECTING) 또는 상태 미수신
   return (
     <Wrap isTest={isTest}>
-      <div style={{ fontSize: 56 }}>🎉</div>
       <h1 style={h1}>응모가 완료되었습니다</h1>
       <p style={sub}>
         {state ? <>현재 <b style={{ color: "#8f7bff" }}>{state.entryCount}</b>명 응모 중 · </> : null}
@@ -215,7 +208,7 @@ function Wrap({ isTest, children }: { isTest: boolean; children: React.ReactNode
     >
       {isTest && (
         <div style={{ marginBottom: 14, fontSize: 12.5, fontWeight: 800, background: "#7f1d1d", padding: "4px 12px", borderRadius: 8 }}>
-          🧪 테스트 모드 — 실제 행사 아님
+          테스트 모드 — 실제 행사 아님
         </div>
       )}
       {children}
@@ -228,12 +221,11 @@ const sub: React.CSSProperties = { opacity: 0.7, marginTop: 12, fontSize: 15.5, 
 const linkBtn: React.CSSProperties = {
   marginTop: 22,
   padding: "12px 22px",
-  borderRadius: 12,
-  background: "linear-gradient(180deg,#7a68ff,#5847e6)",
-  border: "1px solid #9f92ff55",
+  borderRadius: 10,
+  background: "#6d5cff",
+  border: "none",
   color: "#fff",
-  fontWeight: 800,
+  fontWeight: 700,
   fontSize: 15.5,
   textDecoration: "none",
-  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.16), 0 3px 10px rgba(0,0,0,0.35)",
 };

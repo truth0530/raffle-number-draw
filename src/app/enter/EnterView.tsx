@@ -130,7 +130,6 @@ export default function EnterView({ mode }: { mode: "live" | "test" }) {
   if (closed) {
     return (
       <main style={wrap}>
-        <div style={{ fontSize: 56, textAlign: "center" }}>⏳</div>
         <h1 style={{ fontSize: 25, fontWeight: 800, textAlign: "center", marginTop: 14 }}>
           응모가 마감되었습니다
         </h1>
@@ -149,7 +148,7 @@ export default function EnterView({ mode }: { mode: "live" | "test" }) {
   return (
     <main style={wrap}>
       <h1 style={{ fontSize: 27, fontWeight: 800, textAlign: "center" }}>
-        추첨 응모{isTest && <span style={{ marginLeft: 8, fontSize: 13, fontWeight: 800, background: "#7f1d1d", padding: "3px 10px", borderRadius: 8, verticalAlign: "middle" }}>🧪 테스트</span>}
+        추첨 응모{isTest && <span style={{ marginLeft: 8, fontSize: 13, fontWeight: 800, background: "#7f1d1d", padding: "3px 10px", borderRadius: 8, verticalAlign: "middle" }}>테스트</span>}
       </h1>
       <p style={{ textAlign: "center", opacity: 0.7, marginTop: 8, marginBottom: 8, fontSize: 16 }}>
         이름과 휴대전화 뒤 4자리를 입력하세요.
@@ -158,7 +157,7 @@ export default function EnterView({ mode }: { mode: "live" | "test" }) {
       {/* 이미 이 폰으로 응모한 경우 — 중복 응모 착각 방지 + 결과 화면 안내 */}
       {mineCount > 0 && (
         <Link href={doneHref} style={{ ...resultLink, marginTop: 4, marginBottom: 10, fontSize: 14, padding: "10px 16px" }}>
-          ✅ 이 폰으로 {mineCount}명 응모됨 — 내 결과 보기 →
+          이 폰으로 {mineCount}명 응모됨 — 내 결과 보기 →
         </Link>
       )}
 
@@ -232,11 +231,11 @@ const resultLink: React.CSSProperties = {
   textAlign: "center",
   marginTop: 22,
   padding: "13px 22px",
-  borderRadius: 12,
-  background: "linear-gradient(180deg,#372f6e,#2a2555)",
-  border: "1px solid #9f92ff55",
-  color: "#fff",
-  fontWeight: 800,
+  borderRadius: 10,
+  background: "rgba(109,92,255,0.14)",
+  border: "1px solid rgba(109,92,255,0.45)",
+  color: "#c9c2ff",
+  fontWeight: 700,
   fontSize: 15.5,
   textDecoration: "none",
 };
@@ -244,15 +243,13 @@ const resultLink: React.CSSProperties = {
 function buttonStyle(busy: boolean): React.CSSProperties {
   return {
     marginTop: 8,
-    padding: "18px",
-    fontSize: 20,
-    fontWeight: 800,
-    borderRadius: 14,
-    border: busy ? "1px solid #3a3a4a" : "1px solid #9f92ff55",
-    background: busy ? "#3a3a4a" : "linear-gradient(180deg,#7a68ff,#5847e6)",
-    color: "#fff",
+    padding: "17px",
+    fontSize: 19,
+    fontWeight: 700,
+    borderRadius: 12,
+    border: "none",
+    background: busy ? "#2c2c38" : "#6d5cff",
+    color: busy ? "#8c8c9a" : "#fff",
     cursor: busy ? "default" : "pointer",
-    boxShadow: busy ? "none" : "inset 0 1px 0 rgba(255,255,255,0.16), 0 3px 10px rgba(0,0,0,0.35)",
-    textShadow: "0 1px 2px rgba(0,0,0,0.35)",
   };
 }

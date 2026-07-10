@@ -31,7 +31,7 @@ export default function TestGate() {
   if (!authed) {
     return (
       <main style={wrap}>
-        <h1 style={h1}>🧪 시나리오 테스트 모드</h1>
+        <h1 style={h1}>시나리오 테스트 모드</h1>
         <p style={{ opacity: 0.65, marginTop: 10, lineHeight: 1.7 }}>
           도우미용 연습 공간입니다. 테스트 코드(8자리)를 입력하세요.
           <br />여기서 하는 모든 조작은 <b>이 컴퓨터 안에서만</b> 동작하며 실제 행사에
@@ -54,7 +54,7 @@ export default function TestGate() {
 
   return (
     <main style={wrap}>
-      <h1 style={h1}>🧪 시나리오 테스트 모드</h1>
+      <h1 style={h1}>시나리오 테스트 모드</h1>
       <p style={{ opacity: 0.65, marginTop: 10, lineHeight: 1.7, fontSize: 14 }}>
         실제와 똑같은 화면으로 전체 시나리오를 연습합니다. 진행은 <b>리모컨 하나</b>로
         충분합니다 — 무대(프로젝터) 창은 리모컨 안의 <b>[무대 화면 ↗]</b> 버튼으로 엽니다.

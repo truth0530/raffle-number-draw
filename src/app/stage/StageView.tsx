@@ -29,14 +29,6 @@ function fetchT(url: string, ms = 4000): Promise<Response> {
   return fetch(url, { cache: "no-store", signal: c.signal }).finally(() => clearTimeout(t));
 }
 
-// 대형 화면 개인정보 최소화: 이름 가운데를 가린다(홍*동). 뒤4자리와 조합돼도
-// 개인 특정이 어렵게. 사회자 호명용 전체 이름은 리모컨 CSV에만.
-function maskName(n: string): string {
-  const c = [...n];
-  if (c.length <= 1) return n;
-  if (c.length === 2) return c[0] + "＊";
-  return c[0] + "＊".repeat(c.length - 2) + c[c.length - 1];
-}
 
 export default function StageView({ mode }: { mode: "live" | "test" }) {
   const [state, setState] = useState<State | null>(null);
@@ -253,7 +245,7 @@ export default function StageView({ mode }: { mode: "live" | "test" }) {
                         추가
                       </div>
                     )}
-                    <div style={{ fontSize: 30, fontWeight: 800 }}>{maskName(w.name)}</div>
+                    <div style={{ fontSize: 30, fontWeight: 800 }}>{w.name}</div>
                     <div style={{ fontSize: 24, color: "#ffd24a", letterSpacing: 3 }}>{w.last4}</div>
                   </div>
                 );
@@ -272,7 +264,7 @@ export default function StageView({ mode }: { mode: "live" | "test" }) {
           <h1 style={{ fontSize: 40, fontWeight: 800 }}>추첨 결과</h1>
           <ul style={{ marginTop: 16, fontSize: 24, columns: 2, listStyle: "none" }}>
             {winners.map((w) => (
-              <li key={w.rank}>{maskName(w.name)} · {w.last4}</li>
+              <li key={w.rank}>{w.name} · {w.last4}</li>
             ))}
           </ul>
         </Center>
@@ -281,14 +273,14 @@ export default function StageView({ mode }: { mode: "live" | "test" }) {
       {/* 네트워크 끊김 배지 — 조용히 멈춘 화면을 진행자가 즉시 알아채게 */}
       {offline && (
         <div style={{ position: "absolute", top: 14, right: 14, zIndex: 30, padding: "8px 16px", borderRadius: 10, background: "rgba(127,29,29,0.92)", border: "1px solid #ef4444", fontSize: 15, fontWeight: 800 }}>
-          ⚠ 연결 끊김 — 재연결 시도 중
+          연결 끊김 — 재연결 시도 중
         </div>
       )}
 
       {/* 테스트 모드 워터마크 — 실제 무대와 절대 혼동하지 않게 */}
       {mode === "test" && (
         <div style={{ position: "absolute", bottom: 14, left: 14, zIndex: 20, padding: "6px 14px", borderRadius: 10, background: "rgba(127,29,29,0.85)", border: "1px solid #b91c1c", fontSize: 14, fontWeight: 800, pointerEvents: "none" }}>
-          🧪 테스트 모드 — 실제 행사 아님 (이 컴퓨터에서만 동작)
+          테스트 모드 — 실제 행사 아님 (이 컴퓨터에서만 동작)
         </div>
       )}
 
@@ -328,8 +320,8 @@ function Overlay({ children }: { children: React.ReactNode }) {
 }
 const winnerCard: React.CSSProperties = {
   padding: "16px 10px",
-  borderRadius: 16,
-  background: "linear-gradient(180deg,#1d1a10,#17171f)",
-  border: "1px solid #4a3d18",
+  borderRadius: 14,
+  background: "rgba(255,210,74,0.06)",
+  border: "1px solid rgba(255,210,74,0.28)",
   animation: "pop .5s ease",
 };

@@ -18,18 +18,21 @@ body {
   box-sizing: border-box;
 }
 
-/* 버튼 촉감 — 인라인 스타일로는 :active/:disabled를 못 만들어 전역으로 통일 */
+/* 버튼 촉감 — 인라인 스타일로는 :hover/:active/:disabled를 못 만들어 전역으로 통일 */
 button {
-  transition: transform 0.06s ease, filter 0.12s ease, box-shadow 0.15s ease;
+  transition: opacity 0.12s ease, filter 0.12s ease, transform 0.06s ease;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
 }
+button:not(:disabled):hover {
+  filter: brightness(1.1);
+}
 button:not(:disabled):active {
-  transform: translateY(1px) scale(0.98);
-  filter: brightness(1.12);
+  transform: scale(0.98);
+  filter: brightness(0.92);
 }
 button:disabled {
-  opacity: 0.55;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 :focus-visible {
@@ -39,9 +42,9 @@ button:disabled {
 
 /* 메인 입구 카드 */
 a.homecard {
-  transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 a.homecard:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
+  border-color: #3d3d4d;
+  background: #16161f;
 }

@@ -179,7 +179,7 @@ export default function ControlView({ mode }: { mode: "live" | "test" }) {
       if (!d?.ok) return;
       const shortfall = Number(d.shortfall ?? 0);
       if (shortfall > 0) {
-        setMsg(`⚠ 후보 부족: 요청 ${d.requested}명 중 ${d.drawn}명만 추첨됨`);
+        setMsg(`후보 부족: 요청 ${d.requested}명 중 ${d.drawn}명만 추첨됨`);
       } else {
         setMsg(`추첨 완료: ${d.drawn}명`);
       }
@@ -248,7 +248,7 @@ export default function ControlView({ mode }: { mode: "live" | "test" }) {
           관리자 리모컨
           {isTest && (
             <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 800, background: "#7f1d1d", padding: "2px 8px", borderRadius: 7, verticalAlign: "middle" }}>
-              🧪 테스트
+              테스트
             </span>
           )}
         </h1>
@@ -265,7 +265,7 @@ export default function ControlView({ mode }: { mode: "live" | "test" }) {
       {/* 네트워크 끊김 — 리모컨 조작이 안 먹는 상태를 즉시 알림 */}
       {offline && (
         <div style={{ padding: "9px 12px", borderRadius: 10, background: "rgba(127,29,29,0.9)", border: "1px solid #ef4444", fontSize: 13.5, fontWeight: 800 }}>
-          ⚠ 서버 연결 끊김 — 재연결 시도 중 (조작이 반영되지 않을 수 있음)
+          서버 연결 끊김 — 재연결 시도 중 (조작이 반영되지 않을 수 있음)
         </div>
       )}
 
@@ -286,9 +286,9 @@ export default function ControlView({ mode }: { mode: "live" | "test" }) {
                     fontSize: 11.5,
                     fontWeight: 800,
                     whiteSpace: "nowrap",
-                    background: active ? "linear-gradient(180deg,#7a68ff,#5847e6)" : passed ? "#232336" : "#16161f",
-                    color: active ? "#fff" : passed ? "#8f7bff" : "#55556a",
-                    border: active ? "1px solid #9f92ff66" : "1px solid #23232f",
+                    background: active ? "#6d5cff" : passed ? "rgba(109,92,255,0.12)" : "transparent",
+                    color: active ? "#fff" : passed ? "#a99cff" : "#4e4e5e",
+                    border: active ? "1px solid transparent" : "1px solid #23232f",
                   }}
                 >
                   {s.label}
@@ -312,7 +312,7 @@ export default function ControlView({ mode }: { mode: "live" | "test" }) {
       {/* 리허설 데이터 잔존 경고: 본행사에 가상 인물이 당첨되는 사고 방지 */}
       {(state?.rehearsalCount ?? 0) > 0 && (
         <div style={{ padding: 12, borderRadius: 12, background: "#3b1113", border: "1px solid #7f1d1d", fontSize: 13.5 }}>
-          <b style={{ color: "#fca5a5" }}>⚠ 가상(리허설) 응모 {state?.rehearsalCount}명 포함</b>
+          <b style={{ color: "#fca5a5" }}>가상(리허설) 응모 {state?.rehearsalCount}명 포함</b>
           <span style={{ opacity: 0.8 }}> — 본행사 전 삭제 필요</span>
           {(scene === "QR" || scene === "COLLECTING" || scene === "FROZEN") && (
             <button
@@ -391,7 +391,7 @@ export default function ControlView({ mode }: { mode: "live" | "test" }) {
                 onClick={() => {
                   const n = parseInt(drawN, 10);
                   if (!(n > 0)) return setMsg("추첨 인원을 확인하세요.");
-                  const warn = (state?.rehearsalCount ?? 0) > 0 ? `\n⚠ 가상(리허설) 응모 ${state?.rehearsalCount}명이 포함되어 있습니다!` : "";
+                  const warn = (state?.rehearsalCount ?? 0) > 0 ? `\n가상(리허설) 응모 ${state?.rehearsalCount}명이 포함되어 있습니다!` : "";
                   if (confirm(`당첨자 ${n}명을 추첨합니다. 병이 뒤집힙니다.${warn} 진행할까요?`)) runDraw(n);
                 }}
               >
@@ -455,9 +455,9 @@ export default function ControlView({ mode }: { mode: "live" | "test" }) {
               <span style={{ fontSize: 12.5, opacity: 0.6, flex: "0 0 auto", width: 64 }}>
                 기울기 {(state?.tiltDeg ?? 0).toFixed(0)}°
               </span>
-              <button style={chip(false)} onClick={() => call("/api/jar", { action: "tilt", delta: -12 })}>◀ 좌</button>
+              <button style={chip(false)} onClick={() => call("/api/jar", { action: "tilt", delta: -12 })}>좌</button>
               <button style={chip(false)} onClick={() => call("/api/jar", { action: "resetTilt" })}>정렬</button>
-              <button style={chip(false)} onClick={() => call("/api/jar", { action: "tilt", delta: 12 })}>우 ▶</button>
+              <button style={chip(false)} onClick={() => call("/api/jar", { action: "tilt", delta: 12 })}>우</button>
             </div>
 
             <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>

@@ -1,52 +1,50 @@
 // 공용 UI 토큰 — 관리자·입구 화면의 버튼/패널/입력을 한 곳에서 일관되게.
+// 디자인 언어: 플랫 단색. 그라데이션·광택·그림자 없이 색·여백·타이포로만 위계를 만든다.
 // (무대·슬라이드쇼 등 연출 화면은 각자 전용 스타일 유지)
 
 import type { CSSProperties } from "react";
 
-// 팔레트: [윗면(밝음), 아랫면(어두움), 테두리 원색]
-const PALETTE = {
-  violet: ["#7a68ff", "#5847e6", "#9f92ff"],
-  green: ["#0eaf7c", "#047857", "#34d399"],
-  orange: ["#ea6a1a", "#c2410c", "#fb923c"],
-  slate: ["#3f3f4f", "#2c2c38", "#6b6b82"],
-  red: ["#a51d1d", "#7f1d1d", "#dc2626"],
-  navy: ["#27507f", "#1e3a5f", "#4b90d6"],
-  indigo: ["#5b54ee", "#4338ca", "#818cf8"],
-  sky: ["#0ea5e9", "#0369a1", "#38bdf8"],
+// 톤: 배경 / 글자 / 테두리. slate만 중립 서피스(테두리로 구분), 나머지는 단색 채움.
+const TONES = {
+  violet: { bg: "#6d5cff", fg: "#ffffff", bd: "transparent" },
+  green: { bg: "#059669", fg: "#ffffff", bd: "transparent" },
+  orange: { bg: "#c2410c", fg: "#ffffff", bd: "transparent" },
+  slate: { bg: "#20202a", fg: "#e4e4ec", bd: "#2e2e3a" },
+  red: { bg: "#b91c1c", fg: "#ffffff", bd: "transparent" },
+  navy: { bg: "#1e3a5f", fg: "#dbeafe", bd: "transparent" },
+  indigo: { bg: "#4f46e5", fg: "#ffffff", bd: "transparent" },
+  sky: { bg: "#0284c7", fg: "#ffffff", bd: "transparent" },
 } as const;
-export type Tone = keyof typeof PALETTE;
+export type Tone = keyof typeof TONES;
 
 export function btn(tone: Tone, opts: { size?: "sm" | "md" | "lg" } = {}): CSSProperties {
-  const [top, bottom, edge] = PALETTE[tone];
+  const t = TONES[tone];
   const size = opts.size ?? "md";
   return {
-    padding: size === "lg" ? "15px 16px" : size === "sm" ? "9px 10px" : "12px 14px",
-    fontSize: size === "lg" ? 16.5 : size === "sm" ? 13.5 : 15,
-    fontWeight: 800,
-    borderRadius: 12,
-    border: `1px solid ${edge}55`,
-    background: `linear-gradient(180deg, ${top}, ${bottom})`,
-    color: "#fff",
+    padding: size === "lg" ? "14px 16px" : size === "sm" ? "9px 12px" : "12px 14px",
+    fontSize: size === "lg" ? 16 : size === "sm" ? 13.5 : 15,
+    fontWeight: 700,
+    borderRadius: 10,
+    border: `1px solid ${t.bd}`,
+    background: t.bg,
+    color: t.fg,
     cursor: "pointer",
     width: "100%",
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.16), 0 3px 10px rgba(0,0,0,0.35)",
-    textShadow: "0 1px 2px rgba(0,0,0,0.35)",
   };
 }
 
-// 토글형 알약 버튼(선택지 행) — active 시 보라 하이라이트.
+// 토글형 알약 버튼(선택지 행) — active 시 보라 틴트.
 export function chip(active: boolean): CSSProperties {
   return {
     flex: 1,
     padding: "9px 6px",
     fontSize: 13.5,
-    fontWeight: 700,
-    borderRadius: 10,
-    border: active ? "1px solid #9f92ff" : "1px solid #2a2a38",
-    background: active ? "linear-gradient(180deg,#372f6e,#2a2555)" : "#181822",
-    color: active ? "#fff" : "#c7c7d4",
+    fontWeight: 600,
+    borderRadius: 9,
+    border: active ? "1px solid rgba(109,92,255,0.55)" : "1px solid #2a2a35",
+    background: active ? "rgba(109,92,255,0.16)" : "transparent",
+    color: active ? "#c9c2ff" : "#a8a8b6",
     cursor: "pointer",
-    boxShadow: active ? "inset 0 1px 0 rgba(255,255,255,0.12)" : "none",
   };
 }
 
@@ -55,26 +53,26 @@ export const ghostDanger: CSSProperties = {
   width: "100%",
   padding: "11px 14px",
   fontSize: 14,
-  fontWeight: 700,
-  borderRadius: 12,
-  border: "1px solid #7f1d1d88",
-  background: "rgba(127,29,29,0.16)",
-  color: "#fca5a5",
+  fontWeight: 600,
+  borderRadius: 10,
+  border: "1px solid rgba(127,29,29,0.5)",
+  background: "rgba(185,28,28,0.08)",
+  color: "#f87171",
   cursor: "pointer",
 };
 
 export const panel: CSSProperties = {
   padding: 12,
-  borderRadius: 14,
-  background: "#13131c",
-  border: "1px solid #23232f",
+  borderRadius: 12,
+  background: "#12121a",
+  border: "1px solid #22222c",
 };
 
 export const panelTitle: CSSProperties = {
   fontSize: 11.5,
-  fontWeight: 800,
+  fontWeight: 700,
   letterSpacing: 1.2,
-  opacity: 0.55,
+  opacity: 0.5,
   marginBottom: 8,
 };
 
@@ -82,8 +80,8 @@ export const inputBase: CSSProperties = {
   padding: "11px 12px",
   fontSize: 16,
   borderRadius: 10,
-  border: "1px solid #2a2a38",
-  background: "#181822",
+  border: "1px solid #2a2a35",
+  background: "#14141c",
   color: "#fff",
   outline: "none",
 };
