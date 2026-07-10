@@ -111,6 +111,13 @@ async function main() {
   const illegal = await api("/api/scene", { method: "POST", body: { to: "WINNERS" }, token: TOKEN });
   check("FROZEN→WINNERS 불법전이 거부 409", illegal.status === 409, String(illegal.status));
 
+  // 6.5) QR에서 바로 마감 가능(리모컨 '응모 마감' 버튼이 QR 씬에서도 동작해야 함)
+  //   현재 FROZEN 상태이므로: 재개(COLLECTING) → QR → FROZEN 직행 → 다시 재개 → 재마감 경로로 검증
+  await api("/api/scene", { method: "POST", body: { to: "COLLECTING" }, token: TOKEN });
+  await api("/api/scene", { method: "POST", body: { to: "QR" }, token: TOKEN });
+  const qrFreeze = await api("/api/scene", { method: "POST", body: { to: "FROZEN" }, token: TOKEN });
+  check("QR→FROZEN 직행 마감 허용", qrFreeze.json?.ok === true, JSON.stringify(qrFreeze.json));
+
   // 7) 토큰 없는 변경요청 401
   const noToken = await api("/api/scene", { method: "POST", body: { to: "DRAWING" } });
   check("토큰 없는 scene 변경 401", noToken.status === 401, String(noToken.status));
