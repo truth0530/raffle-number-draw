@@ -65,6 +65,18 @@ async function main() {
     JSON.stringify(entList[0])
   );
 
+  // 2.7) 리허설: 가상 응모 투입/선별 삭제(관리자 전용)
+  const noTokenSeed = await api("/api/rehearsal", { method: "POST", body: { action: "seed", count: 20 } });
+  check("토큰 없는 리허설 401", noTokenSeed.status === 401, String(noTokenSeed.status));
+  const seed = await api("/api/rehearsal", { method: "POST", body: { action: "seed", count: 20 }, token: TOKEN });
+  check("가상 응모 20명 투입", seed.json?.ok === true && seed.json?.seeded === 20, JSON.stringify(seed.json));
+  s = await api("/api/state");
+  check("투입 후 총 50명", s.json?.entryCount === 50, String(s.json?.entryCount));
+  const clear = await api("/api/rehearsal", { method: "POST", body: { action: "clear" }, token: TOKEN });
+  check("가상 응모만 삭제(20명)", clear.json?.ok === true && clear.json?.deleted === 20, JSON.stringify(clear.json));
+  s = await api("/api/state");
+  check("삭제 후 실제 응모 30명 유지", s.json?.entryCount === 30, String(s.json?.entryCount));
+
   // 3) 잘못된 입력 거부
   const badLast4 = await api("/api/enter", { method: "POST", body: { name: "홍길동", last4: "12" } });
   check("뒤4자리 오류 422", badLast4.status === 422, String(badLast4.status));
@@ -80,6 +92,8 @@ async function main() {
 
   const afterFreeze = await api("/api/enter", { method: "POST", body: { name: "지각생", last4: "9999" } });
   check("마감 후 응모 거부 409", afterFreeze.status === 409, String(afterFreeze.status));
+  const seedFrozen = await api("/api/rehearsal", { method: "POST", body: { action: "seed", count: 5 }, token: TOKEN });
+  check("마감 후 가상 응모 거부 409", seedFrozen.status === 409, String(seedFrozen.status));
 
   // 6) 불법 전이 거부
   const illegal = await api("/api/scene", { method: "POST", body: { to: "WINNERS" }, token: TOKEN });
@@ -118,6 +132,10 @@ async function main() {
   const ranks = all.map((w) => w.rank).sort((a, b) => a - b);
   const ranksOk = ranks.every((r, i) => r === i + 1);
   check("rank 1..23 연속", ranksOk, ranks.join(","));
+
+  // 9.5) 추첨 시작 후에는 가상 응모 선별 삭제 금지(명단 뒤섞임 방지)
+  const clearLive = await api("/api/rehearsal", { method: "POST", body: { action: "clear" }, token: TOKEN });
+  check("추첨 중 가상 응모 삭제 잠금 423", clearLive.status === 423, String(clearLive.status));
 
   // 10) 명단 공개 전이
   const rev = await api("/api/scene", { method: "POST", body: { to: "WINNERS" }, token: TOKEN });

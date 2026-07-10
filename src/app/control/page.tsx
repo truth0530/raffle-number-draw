@@ -28,6 +28,7 @@ export default function ControlPage() {
   const [msg, setMsg] = useState<string>("");
   const [addN, setAddN] = useState("3");
   const [durInput, setDurInput] = useState("30");
+  const [seedN, setSeedN] = useState("20");
   const stopped = useRef(false);
 
   // 토큰은 로컬에만 보관(URL/서버 로그에 안 남김).
@@ -277,6 +278,52 @@ export default function ControlPage() {
           </>
         )}
       </div>
+
+      {/* 리허설: 가상 응모 투입(응모 접수 중에만) — 실제 관중 없이 전체 시나리오 시연 */}
+      {(scene === "QR" || scene === "COLLECTING") && (
+        <div style={{ marginTop: 24, padding: 16, borderRadius: 14, background: "#141420", border: "1px solid #24242f" }}>
+          <div style={{ fontSize: 14, opacity: 0.7, marginBottom: 4 }}>리허설 (가상 응모)</div>
+          <div style={{ fontSize: 12, opacity: 0.5, marginBottom: 12 }}>
+            가상 인원을 투입해 마감→추첨→추가추첨까지 시연. 리허설 후 전체 리셋 필수.
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            {[20, 100, 300].map((n) => (
+              <button key={n} style={miniBtn(seedN === String(n))} onClick={() => setSeedN(String(n))}>
+                {n}명
+              </button>
+            ))}
+            <input
+              value={seedN}
+              onChange={(e) => setSeedN(e.target.value.replace(/\D/g, "").slice(0, 3))}
+              inputMode="numeric"
+              style={{ ...input, width: 70, marginTop: 0, textAlign: "center", padding: "10px 6px", fontSize: 14 }}
+            />
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              style={{ ...miniBtn(false), background: "#1e3a5f", border: "1px solid #2d5a8f" }}
+              onClick={async () => {
+                const n = parseInt(seedN, 10);
+                if (!(n > 0)) return;
+                const d = await call("/api/rehearsal", { action: "seed", count: n });
+                if (d?.ok) setMsg(`가상 응모 ${d.seeded}명 투입됨`);
+              }}
+            >
+              가상 응모 투입
+            </button>
+            <button
+              style={miniBtn(false)}
+              onClick={async () => {
+                if (!confirm("가상 응모만 삭제합니다(실제 응모는 유지). 진행할까요?")) return;
+                const d = await call("/api/rehearsal", { action: "clear" });
+                if (d?.ok) setMsg(`가상 응모 ${d.deleted}명 삭제됨`);
+              }}
+            >
+              가상 응모만 삭제
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* QR 표시 제어 (응모 접수 중) */}
       {(scene === "QR" || scene === "COLLECTING") && (
