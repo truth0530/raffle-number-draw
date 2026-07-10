@@ -170,11 +170,11 @@ export default function NumbersShow() {
       </section>
 
       {hasAbsent && (
-        <aside style={{ width: "24vw", background: "rgba(120,20,30,0.14)", borderLeft: "2px solid rgba(255,90,90,0.3)", display: "flex", flexDirection: "column", padding: "2vh 1.2vw", overflow: "hidden", position: "relative", zIndex: 1 }}>
-          <div style={{ fontSize: "min(2.4vw, 26px)", fontWeight: 800, color: "#ff8a8a", marginBottom: "1.5vh" }}>없음 · 교체 대기 ({absent.length})</div>
+        <aside style={{ width: "24vw", background: "rgba(244,63,94,0.07)", borderLeft: "2px solid rgba(244,63,94,0.3)", display: "flex", flexDirection: "column", padding: "2vh 1.2vw", overflow: "hidden", position: "relative", zIndex: 1 }}>
+          <div style={{ fontSize: "min(2.4vw, 26px)", fontWeight: 800, color: "#fb7185", marginBottom: "1.5vh" }}>없음 · 교체 대기 ({absent.length})</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignContent: "flex-start", overflow: "auto" }}>
             {absent.map((it) => (
-              <div key={it.n} style={{ minWidth: 74, padding: "10px 12px", borderRadius: 12, fontSize: "min(2.6vw, 34px)", fontWeight: 900, color: "#fecaca", background: "rgba(180,30,40,0.28)", border: "2px solid rgba(255,90,90,0.5)", textDecoration: "line-through", textDecorationThickness: 3 }}>
+              <div key={it.n} style={{ minWidth: 74, padding: "10px 12px", borderRadius: 12, fontSize: "min(2.6vw, 34px)", fontWeight: 900, color: "#fecdd3", background: "rgba(244,63,94,0.18)", border: "2px solid rgba(251,113,133,0.5)" }}>
                 {it.n}
               </div>
             ))}
