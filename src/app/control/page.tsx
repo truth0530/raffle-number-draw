@@ -13,6 +13,13 @@ type State = {
   winners: { rank: number }[];
 };
 
+// 타임아웃 있는 fetch: 응답이 끊긴 채 pending으로 남으면 폴링 루프가 영구 정지한다(실측).
+function fetchT(url: string, ms = 4000): Promise<Response> {
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), ms);
+  return fetch(url, { cache: "no-store", signal: c.signal }).finally(() => clearTimeout(t));
+}
+
 const SCENE_LABEL: Record<string, string> = {
   QR: "QR (응모 접수)",
   COLLECTING: "응모 현황",
@@ -48,7 +55,7 @@ export default function ControlPage() {
     async function poll() {
       while (!stopped.current) {
         try {
-          const res = await fetch("/api/state", { cache: "no-store" });
+          const res = await fetchT("/api/state");
           const data = await res.json();
           if (data.ok) setState(data);
         } catch {

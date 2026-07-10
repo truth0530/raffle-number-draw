@@ -5,6 +5,13 @@ import QRCode from "qrcode";
 import JarCanvas, { Entry } from "./JarCanvas";
 
 type Winner = { entryId: string; name: string; last4: string; rank: number; batch: number };
+
+// 타임아웃 있는 fetch: 응답이 끊긴 채 pending으로 남으면 폴링 루프가 영구 정지한다(실측).
+function fetchT(url: string, ms = 4000): Promise<Response> {
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), ms);
+  return fetch(url, { cache: "no-store", signal: c.signal }).finally(() => clearTimeout(t));
+}
 type QrState = { visible: boolean; size: string; corner: string };
 type State = {
   ok: boolean;
@@ -41,8 +48,8 @@ export default function StagePage() {
       while (!stopped.current) {
         try {
           const [sRes, eRes] = await Promise.all([
-            fetch("/api/state", { cache: "no-store" }),
-            fetch("/api/entries", { cache: "no-store" }),
+            fetchT("/api/state"),
+            fetchT("/api/entries"),
           ]);
           const sData = await sRes.json();
           const eData = await eRes.json();

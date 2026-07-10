@@ -24,7 +24,8 @@ type Ball = {
   winner: boolean;
   // 배출 단계: phys(물리) → exit(넥 통과 스크립트, 잼 불가능) → fall(병 밖 화면 자유낙하)
   phase: "phys" | "exit" | "fall";
-  exit?: { fromX: number; fromY: number; t0: number; dur: number };
+  // via: 몸통 깊은 곳에서 뽑힐 때 목구멍 경유점(로컬) — 직선이 어깨 유리를 지르지 않게.
+  exit?: { fromX: number; fromY: number; t0: number; dur: number; viaX?: number; viaY?: number };
   fall?: { x: number; y: number; vx: number; vy: number };
   flashUntil: number;
 };
@@ -103,6 +104,7 @@ export default function JarCanvas({
   const lastNowRef = useRef<number>(0);
   const physAccRef = useRef<number>(0);
   const wallKeyRef = useRef<string>("");
+  const debugRef = useRef<{ g: JarGeom; angle: number; W: number; H: number } | null>(null);
   const recoveredRef = useRef<number>(0); // 병 밖 이탈 복구 누적(0이어야 정상)
   const rafRef = useRef<number>(0);
   const propsRef = useRef<Props>({ scene, entries, winnerKeys, corkOpen, shakeSeq, durationMs, tiltDeg });
@@ -333,20 +335,52 @@ export default function JarCanvas({
 
     // 탈락자 배출 시작: 물리에서 빼고(더미 자연 붕괴) 넥 통과를 스크립트로.
     // 목구멍 후보만 뽑히므로 경로가 짧아 자연스럽고, 시간은 거리 비례.
+    // 몸통 깊은 곳에서 뽑히면(지연 확장·완주 보증) 직선이 어깨 유리를 지르므로
+    // 목구멍 경유점을 넣는다 — 타원 몸통은 볼록이라 내부점→경유점 직선은 유리 안에 머문다.
     function startExit(b: Ball, g: JarGeom, now: number) {
       Matter.Composite.remove(engine.world, b.body);
-      const dist = Math.hypot(
-        b.body.position.x - g.cx,
-        b.body.position.y - (g.cy - g.RY - g.neckLen)
-      );
+      const fx = b.body.position.x - g.cx;
+      const fy = b.body.position.y - g.cy;
+      const mouthY = -g.RY - g.neckLen;
+      const deep = fy > -g.RY * 0.8; // 어깨 위쪽이 아니면 = 몸통에서 출발
+      const viaX = deep ? fx * 0.15 : undefined;
+      const viaY = deep ? -g.RY * 0.86 : undefined;
+      const dist = deep
+        ? Math.hypot(fx - viaX!, fy - viaY!) + Math.hypot(viaX!, viaY! - mouthY)
+        : Math.hypot(fx, fy - mouthY);
       b.phase = "exit";
       b.exit = {
         fromX: b.body.position.x,
         fromY: b.body.position.y,
         t0: now,
-        dur: Math.min(700, Math.max(200, dist / 0.55)),
+        dur: Math.min(800, Math.max(200, dist / 0.55)),
+        viaX,
+        viaY,
       };
       b.flashUntil = now + 260;
+    }
+
+    // exit 스크립트의 현재 로컬 좌표(진행 p는 0..1 easing 적용 전 원시값).
+    function exitLocalPos(b: Ball, g: JarGeom, now: number): { lx: number; ly: number } {
+      const e = b.exit!;
+      const p = Math.min(1, (now - e.t0) / e.dur);
+      const u = p * p * (3 - 2 * p);
+      const fx = e.fromX - g.cx;
+      const fy = e.fromY - g.cy;
+      const mouthOutX = 0;
+      const mouthOutY = -g.RY - g.neckLen - baseRRef.current * 1.6;
+      if (e.viaX === undefined || e.viaY === undefined) {
+        return { lx: fx + (mouthOutX - fx) * u, ly: fy + (mouthOutY - fy) * u };
+      }
+      const l1 = Math.hypot(fx - e.viaX, fy - e.viaY);
+      const l2 = Math.hypot(e.viaX - mouthOutX, e.viaY - mouthOutY);
+      const split = l1 / Math.max(1, l1 + l2);
+      if (u <= split) {
+        const t = u / Math.max(1e-6, split);
+        return { lx: fx + (e.viaX - fx) * t, ly: fy + (e.viaY - fy) * t };
+      }
+      const t = (u - split) / Math.max(1e-6, 1 - split);
+      return { lx: e.viaX + (mouthOutX - e.viaX) * t, ly: e.viaY + (mouthOutY - e.viaY) * t };
     }
 
     function drawBottle(g: JarGeom, angle: number, corkOpenNow: boolean, celebrate: boolean) {
@@ -461,11 +495,14 @@ export default function JarCanvas({
       }
 
       if (scene === "DRAWING" && drawStartRef.current === null) {
+        // 새로고침 복원이면 baseR가 기본값(20)인 채라, 인원수 기준으로 먼저 재계산해야 한다.
+        // 안 하면 300명×r20이 추첨 기하에 물리적으로 안 들어가 압착·압출 폭주(실측 recovered 3만).
+        baseRRef.current = baseRadius(entries.length);
         // 대기분 + 미등록분 전부 즉시 투입(DRAWING 중 새로고침 복원 포함).
         pendingRef.current = [];
         pendingIdsRef.current.clear();
         for (const e of entries) {
-          if (!byId.has(e.id)) spawn(e, baseR, liveGeom(), "body");
+          if (!byId.has(e.id)) spawn(e, baseRRef.current, liveGeom(), "body");
         }
         drawBaseRRef.current = baseRRef.current;
         // 수집 기하 → 추첨 기하로 병을 재배치하고, 버블 좌표를 비율 매핑(1회성).
@@ -644,19 +681,13 @@ export default function JarCanvas({
         Matter.Engine.update(engine, PHYS_DT);
       }
 
-      // exit 스크립트 진행: 현 위치 → 주둥이 바깥(로컬), 끝나면 화면 자유낙하로 전환.
-      const mouthOutX = 0;
-      const mouthOutY = -g.RY - g.neckLen - baseR * 1.6;
+      // exit 스크립트 진행: 현 위치 → (경유점) → 주둥이 바깥(로컬), 끝나면 화면 자유낙하로 전환.
       for (const b of balls) {
         if (b.phase === "exit" && b.exit) {
           const p = Math.min(1, (now - b.exit.t0) / b.exit.dur);
-          const ease = p * p * (3 - 2 * p);
-          const fx = b.exit.fromX - g.cx;
-          const fy = b.exit.fromY - g.cy;
-          const lx = fx + (mouthOutX - fx) * ease;
-          const ly = fy + (mouthOutY - fy) * ease;
           if (p >= 1) {
-            const ps = toScreen(g.cx, g.cy, lx, ly, angle);
+            const lp = exitLocalPos(b, g, now);
+            const ps = toScreen(g.cx, g.cy, lp.lx, lp.ly, angle);
             // 넥 축 방향(로컬 -y)의 화면 방향으로 초기 속도.
             const dir = toScreen(0, 0, 0, -1, angle);
             b.phase = "fall";
@@ -716,6 +747,7 @@ export default function JarCanvas({
       }
 
       // 자동 검증용 계측(무해한 읽기 전용 메트릭).
+      debugRef.current = { g, angle, W, H };
       (window as unknown as Record<string, unknown>).__jar = {
         scene,
         n: balls.length,
@@ -746,11 +778,8 @@ export default function JarCanvas({
           px = b.fall.x;
           py = b.fall.y;
         } else if (b.phase === "exit" && b.exit) {
-          const p = Math.min(1, (now - b.exit.t0) / b.exit.dur);
-          const ease = p * p * (3 - 2 * p);
-          const fx = b.exit.fromX - g.cx;
-          const fy = b.exit.fromY - g.cy;
-          const ps = toScreen(g.cx, g.cy, fx + (mouthOutX - fx) * ease, fy + (mouthOutY - fy) * ease, angle);
+          const lp = exitLocalPos(b, g, now);
+          const ps = toScreen(g.cx, g.cy, lp.lx, lp.ly, angle);
           px = ps.x;
           py = ps.y;
         } else {
@@ -785,6 +814,30 @@ export default function JarCanvas({
 
       rafRef.current = requestAnimationFrame(step);
     }
+
+    // 물리 검증용 상세 스냅샷(호출 시에만 생성 — 프레임 비용 없음).
+    (window as unknown as Record<string, unknown>).__jarInspect = () => {
+      const d = debugRef.current;
+      if (!d) return null;
+      return {
+        ...d,
+        balls: ballsRef.current.map((b) => ({
+          id: b.id,
+          phase: b.phase,
+          winner: b.winner,
+          x: b.body.position.x,
+          y: b.body.position.y,
+          vx: b.body.velocity.x,
+          vy: b.body.velocity.y,
+          r: b.r,
+          physR: b.physR,
+          exit: b.exit
+            ? { fromX: b.exit.fromX, fromY: b.exit.fromY, t0: b.exit.t0, dur: b.exit.dur, viaX: b.exit.viaX, viaY: b.exit.viaY }
+            : null,
+          fall: b.fall ? { x: b.fall.x, y: b.fall.y } : null,
+        })),
+      };
+    };
 
     rafRef.current = requestAnimationFrame(step);
     return () => {
