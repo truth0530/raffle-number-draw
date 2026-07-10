@@ -22,6 +22,8 @@ type Ball = {
   r: number; // 시각 반지름(부드럽게 애니메이션)
   physR: number; // 물리 반지름(스폰 시 고정, 큰 변화 때만 스냅 재조정)
   winner: boolean;
+  // 추가추첨 연출에서 입구 밖으로 흘러내려 탈락할 운명의 버블.
+  doomed?: boolean;
   // 배출 단계: phys(물리) → exit(넥 통과 스크립트, 잼 불가능) → fall(병 밖 화면 자유낙하)
   phase: "phys" | "exit" | "fall";
   // via: 몸통 깊은 곳에서 뽑힐 때 목구멍 경유점(로컬) — 직선이 어깨 유리를 지르지 않게.
@@ -29,6 +31,9 @@ type Ball = {
   fall?: { x: number; y: number; vx: number; vy: number };
   flashUntil: number;
 };
+
+// 추가추첨 붓기 큐: 병을 세운 뒤 주입구 위에서 순차 투하.
+type RefillItem = { e: Entry; win: boolean; at: number };
 
 type JarGeom = {
   cx: number;
@@ -105,6 +110,12 @@ export default function JarCanvas({
   const physAccRef = useRef<number>(0);
   const wallKeyRef = useRef<string>("");
   const debugRef = useRef<{ g: JarGeom; angle: number; W: number; H: number } | null>(null);
+  // 추가추첨(리필) 연출 상태: 시작되면 병을 세우고 이후 계속 세워둔다.
+  const refillQueueRef = useRef<RefillItem[]>([]);
+  const refillExpectRef = useRef<Set<string>>(new Set()); // 입구로 들어와야 할 신규 당첨 id
+  const refillQueuedRef = useRef<Set<string>>(new Set()); // 큐에 들어있는 id(중복 투하 방지)
+  const refillDoomedSeenRef = useRef<Set<string>>(new Set()); // 이미 탈락 연출에 쓴 id
+  const refillEaseStartRef = useRef<number | null>(null); // 병 세우기 시작 시각
   const recoveredRef = useRef<number>(0); // 병 밖 이탈 복구 누적(0이어야 정상)
   const rafRef = useRef<number>(0);
   const propsRef = useRef<Props>({ scene, entries, winnerKeys, corkOpen, shakeSeq, durationMs, tiltDeg });
@@ -216,14 +227,31 @@ export default function JarCanvas({
       };
     }
 
-    function spawn(e: Entry, baseR: number, g: JarGeom, mode: "inlet" | "body") {
-      const p =
-        mode === "inlet"
-          ? inletPoint(g, e.id)
-          : {
-              x: g.cx + (hash01(e.id + "x") - 0.5) * g.RX * 1.2,
-              y: g.cy - g.RY * (0.15 + hash01(e.id + "y") * 0.5),
-            };
+    function spawn(e: Entry, baseR: number, g: JarGeom, mode: "inlet" | "body" | "refill-win" | "refill-fail") {
+      let p: { x: number; y: number };
+      let v = { x: (hash01(e.id + "vx") - 0.5) * 0.5, y: 1.6 };
+      if (mode === "inlet") {
+        p = inletPoint(g, e.id);
+      } else if (mode === "refill-win") {
+        // 신규 당첨자: 주입구 정중앙 위 — 목을 타고 병 안으로 들어간다.
+        p = {
+          x: g.cx + (hash01(e.id + "rx") - 0.5) * g.mw * 0.7,
+          y: g.cy - g.RY - g.neckLen - baseR * (2.0 + hash01(e.id + "rh") * 2.0),
+        };
+      } else if (mode === "refill-fail") {
+        // 탈락 후보: 주입구를 살짝 빗나가는 위치 — 입구 밖으로 흘러내린다.
+        const side = hash01(e.id + "rs") < 0.5 ? -1 : 1;
+        p = {
+          x: g.cx + side * g.mw * (2.6 + hash01(e.id + "rx") * 1.0),
+          y: g.cy - g.RY - g.neckLen - baseR * (2.0 + hash01(e.id + "rh") * 2.5),
+        };
+        v = { x: side * (0.4 + hash01(e.id + "rv")), y: 1.3 };
+      } else {
+        p = {
+          x: g.cx + (hash01(e.id + "x") - 0.5) * g.RX * 1.2,
+          y: g.cy - g.RY * (0.15 + hash01(e.id + "y") * 0.5),
+        };
+      }
       const body = Matter.Bodies.circle(p.x, p.y, baseR, {
         friction: 0.09,
         frictionStatic: 0.05,
@@ -232,7 +260,7 @@ export default function JarCanvas({
         density: 0.004,
         collisionFilter: { category: BALL_CATEGORY, mask: BALL_MASK },
       });
-      Matter.Body.setVelocity(body, { x: (hash01(e.id + "vx") - 0.5) * 0.5, y: 1.6 });
+      Matter.Body.setVelocity(body, v);
       const b: Ball = {
         id: e.id,
         name: e.name,
@@ -240,6 +268,7 @@ export default function JarCanvas({
         r: baseR * 0.55,
         physR: baseR,
         winner: false,
+        doomed: mode === "refill-fail",
         phase: "phys",
         flashUntil: 0,
       };
@@ -438,12 +467,15 @@ export default function JarCanvas({
       buildWalls(g);
 
       // 물리 반지름이 시대에 뒤처지면(응모 증가로 baseR 축소) 한 번에 스냅 재조정.
-      for (const b of balls) {
-        if (b.phase !== "phys") continue;
-        if (Math.abs(b.physR - baseR) / baseR > 0.15) {
-          const ratio = baseR / b.physR;
-          Matter.Body.scale(b.body, ratio, ratio);
-          b.physR = baseR;
+      // 수집 국면 전용 — DRAWING/WINNERS에선 당첨 확대 성장 블록이 크기를 관리한다(충돌 실측).
+      if (!drawing) {
+        for (const b of balls) {
+          if (b.phase !== "phys") continue;
+          if (Math.abs(b.physR - baseR) / baseR > 0.15) {
+            const ratio = baseR / b.physR;
+            Matter.Body.scale(b.body, ratio, ratio);
+            b.physR = baseR;
+          }
         }
       }
 
@@ -534,15 +566,78 @@ export default function JarCanvas({
         losersSnapRef.current = 0;
       }
 
+      // ---- 추가추첨(리필) 연출 ----
+      // 새 당첨자가 생겼는데 그 버블이 화면에 없으면(이미 배출됨): 병을 세우고,
+      // 주입구 위에서 후보(신규 당첨자 + 탈락 조연)를 쏟는다. 당첨자만 입구로 들어가고
+      // 나머지는 입구 밖으로 흘러내려 탈락하는 구조.
+      if (scene === "DRAWING" && drawStartRef.current !== null) {
+        const missing: Entry[] = [];
+        for (const e of entries) {
+          if (winnerKeys.has(e.id) && !byId.has(e.id) && !refillQueuedRef.current.has(e.id)) missing.push(e);
+        }
+        if (missing.length > 0) {
+          if (refillEaseStartRef.current === null) refillEaseStartRef.current = now;
+          const pool = entries.filter(
+            (e) =>
+              !winnerKeys.has(e.id) &&
+              !byId.has(e.id) &&
+              !refillQueuedRef.current.has(e.id) &&
+              !refillDoomedSeenRef.current.has(e.id)
+          );
+          // 탈락 조연: 당첨자 수의 2배쯤 섞어 부어야 "일부만 들어가는" 그림이 된다.
+          const doomedCount = Math.min(pool.length, Math.max(4, missing.length * 2));
+          for (let i = pool.length - 1; i > 0; i--) {
+            const j = Math.floor(hash01(pool[i].id + now) * (i + 1));
+            [pool[i], pool[j]] = [pool[j], pool[i]];
+          }
+          const doomed = pool.slice(0, doomedCount);
+          doomed.forEach((e) => refillDoomedSeenRef.current.add(e.id));
+          const mix: { e: Entry; win: boolean }[] = [
+            ...missing.map((e) => ({ e, win: true })),
+            ...doomed.map((e) => ({ e, win: false })),
+          ];
+          for (let i = mix.length - 1; i > 0; i--) {
+            const j = Math.floor(hash01(mix[i].e.id + "mix") * (i + 1));
+            [mix[i], mix[j]] = [mix[j], mix[i]];
+          }
+          // 병이 세워질 시간(1.4s)을 준 뒤 240ms 간격으로 붓는다.
+          const lastAt = refillQueueRef.current.length
+            ? refillQueueRef.current[refillQueueRef.current.length - 1].at
+            : now + 1500;
+          mix.forEach((m, i) => {
+            refillQueueRef.current.push({ ...m, at: lastAt + i * 240 });
+            refillQueuedRef.current.add(m.e.id);
+            if (m.win) refillExpectRef.current.add(m.e.id);
+          });
+        }
+        // 큐 소진: 시간이 된 것부터 투하.
+        while (refillQueueRef.current.length && refillQueueRef.current[0].at <= now) {
+          const item = refillQueueRef.current.shift()!;
+          refillQueuedRef.current.delete(item.e.id);
+          if (!byId.has(item.e.id)) spawn(item.e, baseR, g, item.win ? "refill-win" : "refill-fail");
+        }
+      }
+      const refillStarted = refillEaseStartRef.current !== null;
+      const refillActive =
+        refillStarted &&
+        (refillQueueRef.current.length > 0 ||
+          balls.some((b) => b.phase === "phys" && b.doomed) ||
+          [...refillExpectRef.current].some((id) => !byId.has(id)));
+
       const fe = drawStartRef.current === null ? 0 : (now - drawStartRef.current) / FLIP_MS;
       const openFrac = openElapsedRef.current / Math.max(1000, durationMs);
       const autoTilt =
         drawing && corkOpen && winnerKeys.size > 0
           ? AUTO_TILT_MAX * Math.min(1, Math.max(0, openFrac - 0.45) / 0.55)
           : 0;
-      const angle = drawing
+      let angle = drawing
         ? FLIP * easeInOut(Math.min(1, Math.max(0, fe))) + autoTilt + (tiltDeg * Math.PI) / 180
         : 0;
+      // 리필이 시작되면 병을 부드럽게 세우고(1.4s), 이후 계속 세워둔다(수동 기울기만 유지).
+      if (refillStarted) {
+        const k = easeInOut(Math.min(1, (now - (refillEaseStartRef.current ?? now)) / 1400));
+        angle = angle * (1 - k) + ((tiltDeg * Math.PI) / 180) * k;
+      }
 
       // 기울기 = 중력 회전. 병은 물리적으로 고정.
       engine.gravity.x = GRAVITY * Math.sin(angle);
@@ -555,22 +650,38 @@ export default function JarCanvas({
         if (b.phase === "phys" && !b.winner) physLosers++;
         if (b.phase === "exit") exiting++;
       }
-      const celebrate = drawing && winnerKeys.size > 0 && physLosers === 0 && exiting === 0;
-      const holeOpen = drawing && winnerKeys.size > 0 && corkOpen && !celebrate;
+      const celebrate =
+        drawing && winnerKeys.size > 0 && physLosers === 0 && exiting === 0 && !refillActive;
+      // 리필이 시작되면 배출은 끝났다 — 다시 뽑지 않는다.
+      const holeOpen = drawing && winnerKeys.size > 0 && corkOpen && !celebrate && !refillStarted;
 
       // 코르크는 DRAWING 내내 물리 마개로 유지한다(시각적으로만 열림).
       // 배출은 전부 스크립트(pluck)이므로 물리적 통과가 필요 없고, 이로써
       // 당첨자가 열린 주둥이로 미끄러져 나가는 탈출·복구 루프가 원천 봉쇄된다.
-      if (corkRef.current) corkRef.current.collisionFilter.mask = drawing ? BALL_CATEGORY : 0;
+      // 리필 중에는 마개를 비활성화해 신규 당첨자가 목을 타고 들어온다(병이 세워져 있어 탈출 없음).
+      if (corkRef.current)
+        corkRef.current.collisionFilter.mask = drawing && !refillStarted ? BALL_CATEGORY : 0;
 
+      // 당첨 버블은 색을 바꾸지 않고 "물리 몸체 자체"를 키운다 — 시각만 키우면
+      // 서로 겹쳐 이름 가독성이 무너진다(실측). 몸체가 커지면 서로 밀어내 안 겹친다.
       for (const b of balls) {
-        const targetVis = celebrate && b.winner ? baseR * 1.45 : baseR;
-        b.r += (targetVis - b.r) * 0.12;
+        if (b.phase === "phys" && drawing) {
+          const winnerBig = b.winner && (celebrate || refillStarted);
+          const tR = winnerBig ? baseR * 1.42 : baseR;
+          const ratio = tR / b.physR;
+          if (Math.abs(ratio - 1) > 0.012) {
+            const k = Math.max(0.985, Math.min(1.015, ratio));
+            Matter.Body.scale(b.body, k, k);
+            b.physR *= k;
+          }
+        }
+        b.r += (b.physR - b.r) * 0.12;
       }
 
       // 당첨자는 넥에 들어가지 않게 몸통 쪽으로 밀어낸다(생존자가 기운 벽에 얹히는 연출 + 넥 막힘 방지).
       // 기울기 극대(164°)의 중력(-0.94G)보다 강해야 실제로 밀려난다.
-      if (drawing && winnerKeys.size > 0) {
+      // 리필 중에는 금지 — 신규 당첨자가 넥을 "통과해 들어와야" 한다.
+      if (drawing && winnerKeys.size > 0 && !refillStarted) {
         for (const b of balls) {
           if (b.phase !== "phys" || !b.winner) continue;
           const lx = b.body.position.x - g.cx;
@@ -596,15 +707,25 @@ export default function JarCanvas({
 
       if (shakeSeq !== shakeRef.current) {
         shakeRef.current = shakeSeq;
+        // 흔들기 = 중력 반대 방향 "토스". 무작위 속도(±)는 중력에 눌린 더미에선
+        // 티가 안 난다(실측) — 현재 기울기 기준 위로 던져 눈에 보이게 점프시킨다.
+        const gx = engine.gravity.x;
+        const gy = engine.gravity.y;
+        const gl = Math.hypot(gx, gy) || 1;
+        const ux = -gx / gl;
+        const uy = -gy / gl;
         for (const b of balls) {
           if (b.phase !== "phys") continue;
+          const kUp = 8 + hash01(b.id + shakeSeq + "sk") * 5;
+          const kLat = (hash01(b.id + shakeSeq + "sl") - 0.5) * 7;
           Matter.Body.setVelocity(b.body, {
-            x: b.body.velocity.x + (hash01(b.id + shakeSeq + "sx") - 0.5) * 6,
-            y: b.body.velocity.y + (hash01(b.id + shakeSeq + "sy") - 0.5) * 6,
+            x: b.body.velocity.x + ux * kUp + -uy * kLat,
+            y: b.body.velocity.y + uy * kUp + ux * kLat,
           });
         }
       }
 
+      let suctionMouth: { x: number; y: number } | null = null;
       if (holeOpen) {
         if (losersSnapRef.current === 0) losersSnapRef.current = physLosers;
         openElapsedRef.current += frameDt;
@@ -613,9 +734,10 @@ export default function JarCanvas({
         const targetGone = Math.floor(losersSnapRef.current * scheduleFrac);
         const mouthX = g.cx;
         const mouthY = g.cy - g.RY - g.neckLen;
+        suctionMouth = { x: mouthX, y: mouthY };
         // 탈락은 "주둥이 목구멍에 실제로 도달한" 버블만 — 깊숙한 버블을 총알처럼
-        // 뽑아내면 미리 정해진 각본처럼 보인다(관중 관점의 정직성). 공급이 늦어
-        // 스케줄이 밀리면 구역을 점진 확장해 완주는 보장한다.
+        // 뽑아내면 앞의 버블을 유령처럼 통과해 먼저 나가는 그림이 된다(실측 지적).
+        // 기본 구역을 목구멍 코앞으로 좁히고, 공급은 흡입류가 담당한다.
         const lag = Math.max(0, targetGone - pluckedRef.current);
         const rawFrac = openElapsedRef.current / Math.max(1000, durationMs);
         // 지연(lag) 또는 시간 초과 시 구역을 확장 — 초과가 커지면 병 전체를 허용해 완주를 보장.
@@ -623,16 +745,18 @@ export default function JarCanvas({
           Math.min(1, lag / Math.max(6, losersSnapRef.current * 0.08)),
           Math.min(1, Math.max(0, rawFrac - 0.9) * 3)
         );
-        // relax=1이어도 zoneY가 -0.05RY라 몸통 깊숙이(ly>0) 얹힌 탈락자는 영원히
-        // 안 뽑히는 실측 버그 — 60% 초과 시 완주 보증 모드로 병 전체를 허용한다.
-        const overdue = rawFrac > 1.6;
-        const zoneY = overdue ? g.RY * 2 : -g.RY * (0.55 - 0.5 * relax); // 지연될수록 몸통 쪽까지 허용
-        const zoneX = overdue ? g.RX * 2 : g.mw * (1.8 + 4 * relax);
-        while (pluckedRef.current < targetGone) {
+        const overdue = rawFrac > 1.6; // 완주 보증 모드: 병 전체 허용
+        const zoneY = overdue ? g.RY * 2 : -g.RY * (0.8 - 0.6 * relax);
+        const zoneX = overdue ? g.RX * 2 : g.mw * (1.7 + 2.6 * relax);
+        // 동시 배출 상한: 여러 개가 한꺼번에 스크립트되면 깊은 버블이 앞 버블을
+        // 추월·관통하는 착시의 근원 — 목구멍 앞 소수만 순차 배출한다.
+        const CAP = overdue ? 9 : 5;
+        let exitingNow = exiting;
+        while (pluckedRef.current < targetGone && exitingNow < CAP) {
           let best: Ball | null = null;
           let bestD = Infinity;
           for (const b of balls) {
-            if (b.phase !== "phys" || b.winner) continue;
+            if (b.phase !== "phys" || b.winner || b.doomed) continue;
             const lx = b.body.position.x - g.cx;
             const ly = b.body.position.y - g.cy;
             if (ly > zoneY || Math.abs(lx) > zoneX) continue; // 목구멍 밖 = 아직 순서 아님
@@ -642,21 +766,21 @@ export default function JarCanvas({
               best = b;
             }
           }
-          if (!best) break; // 후보 없음 — 슬로싱으로 공급될 때까지 대기
+          if (!best) break; // 후보 없음 — 흡입류가 공급할 때까지 대기
           startExit(best, g, now);
           pluckedRef.current++;
+          exitingNow++;
         }
-        // 주둥이 방향 슬로싱: 랜덤 흔들기 대신 기울어진 병에서 내용물이
-        // 주둥이 쪽으로 쏠리는 자연스러운 공급 흐름을 만든다.
-        const feedInterval = lag > 0 ? 450 : AUTO_SHAKE_INTERVAL;
+        // 보조 슬로싱: 정체가 클 때만 가끔 킥(주 공급은 흡입류).
+        const feedInterval = lag > 0 ? 600 : AUTO_SHAKE_INTERVAL;
         if (physLosers > 0 && now - autoShakeAtRef.current > feedInterval) {
           autoShakeAtRef.current = now;
           for (const b of balls) {
-            if (b.phase !== "phys" || b.winner) continue;
+            if (b.phase !== "phys" || b.winner || b.doomed) continue;
             const dx = mouthX - b.body.position.x;
             const dy = mouthY - b.body.position.y;
             const len = Math.max(1, Math.hypot(dx, dy));
-            const k = 1.1 + hash01(b.id + Math.floor(now) + "f") * 1.4;
+            const k = 0.9 + hash01(b.id + Math.floor(now) + "f") * 1.2;
             Matter.Body.setVelocity(b.body, {
               x: b.body.velocity.x + (dx / len) * k,
               y: b.body.velocity.y + (dy / len) * k,
@@ -672,6 +796,15 @@ export default function JarCanvas({
         physAccRef.current -= PHYS_DT;
         for (const b of balls) {
           if (b.phase !== "phys") continue;
+          // 흡입류: 코르크가 열려 있는 동안 탈락자를 주둥이 쪽으로 끄는 연속 미세 힘.
+          // 간헐 킥보다 강물처럼 자연스럽고, 목구멍 공급이 끊기지 않는다.
+          if (suctionMouth && !b.winner && !b.doomed) {
+            const dx = suctionMouth.x - b.body.position.x;
+            const dy = suctionMouth.y - b.body.position.y;
+            const len = Math.max(1, Math.hypot(dx, dy));
+            const F = b.body.mass * 0.0026;
+            Matter.Body.applyForce(b.body, b.body.position, { x: (dx / len) * F, y: (dy / len) * F });
+          }
           const v = b.body.velocity;
           const sp = Math.hypot(v.x, v.y);
           if (sp > maxV) {
@@ -704,10 +837,23 @@ export default function JarCanvas({
 
       // 이탈 복구(물리 볼 전원): 어떤 이유로든 병 밖 = 즉시 안으로. "병 밖 버블 0" 불변식.
       // 순간이동 티가 안 나게, 중심 방향으로 최소한만 끌어당겨 안으로 재투영한다.
+      // 예외: 리필 탈락 후보(doomed)는 병 밖으로 흘러내리는 것이 정상 — 화면 자유낙하로 전환.
       for (const b of balls) {
         if (b.phase !== "phys") continue;
         const lp = localOf(g, b.body.position.x, b.body.position.y);
         if (!insideJar(g, lp.x, lp.y, b.physR)) {
+          if (b.doomed) {
+            const ps = toScreen(g.cx, g.cy, lp.x, lp.y, angle);
+            Matter.Composite.remove(engine.world, b.body);
+            b.phase = "fall";
+            b.fall = {
+              x: ps.x,
+              y: ps.y,
+              vx: b.body.velocity.x,
+              vy: Math.max(0.6, b.body.velocity.y),
+            };
+            continue;
+          }
           if (scene === "QR" || scene === "COLLECTING") {
             const p = inletPoint(g, b.id + String(Math.floor(now / 500)));
             Matter.Body.setPosition(b.body, p);
@@ -760,6 +906,9 @@ export default function JarCanvas({
         angleDeg: Math.round((angle * 180) / Math.PI),
         openMs: Math.round(openElapsedRef.current),
         celebrate,
+        refillActive,
+        refillQueue: refillQueueRef.current.length,
+        doomed: balls.filter((b) => b.doomed && b.phase === "phys").length,
       };
 
       ctx.clearRect(0, 0, W, H);
@@ -788,24 +937,30 @@ export default function JarCanvas({
           py = ps.y;
         }
         const flashing = now < b.flashUntil;
-        const gold = celebrate && b.winner;
         ctx.globalAlpha = 1;
         ctx.beginPath();
         ctx.arc(px, py, b.r, 0, Math.PI * 2);
-        ctx.fillStyle = gold ? GOLD : colorFor(b.id);
-        if (gold || flashing) {
-          ctx.shadowColor = gold ? GOLD : "#ffffff";
-          ctx.shadowBlur = flashing ? 24 : 18;
+        // 당첨 버블도 색은 그대로(확대만) — 색이 바뀌면 이름 대비가 무너진다(실측 지적).
+        ctx.fillStyle = colorFor(b.id);
+        if (flashing) {
+          ctx.shadowColor = "#ffffff";
+          ctx.shadowBlur = 24;
         } else {
           ctx.shadowBlur = 0;
         }
         ctx.fill();
         ctx.shadowBlur = 0;
+        // 확대된 당첨 버블은 금테 링으로만 표시(내부 색·이름 대비 유지).
+        if (celebrate && b.winner) {
+          ctx.strokeStyle = GOLD;
+          ctx.lineWidth = Math.max(2, b.r * 0.08);
+          ctx.stroke();
+        }
 
         // 이름은 항상 표기: 버블 지름에 여백 최소로 우겨넣는다(초대형 스크린 전제).
         const chars = Math.max(2, b.name.length);
         const fs = Math.max(4, Math.min(b.r * 1.05, (b.r * 2 * 0.94) / (chars * 0.92)));
-        ctx.fillStyle = gold ? "#1a1400" : "rgba(255,255,255,0.96)";
+        ctx.fillStyle = "rgba(255,255,255,0.96)";
         ctx.font = `700 ${fs.toFixed(1)}px -apple-system, "Noto Sans KR", sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
@@ -870,6 +1025,11 @@ export default function JarCanvas({
     losersSnapRef.current = 0;
     autoShakeAtRef.current = 0;
     churnedRef.current = false;
+    refillQueueRef.current = [];
+    refillExpectRef.current.clear();
+    refillQueuedRef.current.clear();
+    refillDoomedSeenRef.current.clear();
+    refillEaseStartRef.current = null;
   }, [scene]);
 
   return (
