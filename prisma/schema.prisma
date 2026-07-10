@@ -3,8 +3,11 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  // Supabase Postgres (2026mission_short 프로젝트의 전용 `raffle` 스키마).
+  // DATABASE_URL = Supavisor 풀러(6543, pgbouncer) / DIRECT_URL = 직결(5432, 마이그레이션용)
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // 현장 번호 추첨(이름·QR 불필요). 단일 행(id=1).

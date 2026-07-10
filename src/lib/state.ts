@@ -24,7 +24,12 @@ export function canTransition(from: Scene, to: Scene): boolean {
 export async function getState() {
   let state = await prisma.eventState.findUnique({ where: { id: 1 } });
   if (!state) {
-    state = await prisma.eventState.create({ data: { id: 1, scene: "QR" } });
+    try {
+      state = await prisma.eventState.create({ data: { id: 1, scene: "QR" } });
+    } catch {
+      // 동시 초기화 경합(P2002): 다른 요청이 먼저 만들었으면 다시 읽는다.
+      state = await prisma.eventState.findUniqueOrThrow({ where: { id: 1 } });
+    }
   }
   return state;
 }

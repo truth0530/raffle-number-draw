@@ -20,10 +20,13 @@ type Ball = {
   name: string;
   key: string;
   body: Matter.Body;
-  r: number;
-  targetR: number;
+  r: number; // 시각 반지름(부드럽게 애니메이션)
+  physR: number; // 물리 반지름(스폰 시 고정, 큰 변화 때만 스냅 재조정)
   winner: boolean;
-  targeted: boolean;
+  // 배출 단계: phys(물리) → exit(넥 통과 스크립트, 잼 불가능) → fall(병 밖 화면 자유낙하)
+  phase: "phys" | "exit" | "fall";
+  exit?: { fromX: number; fromY: number; t0: number; dur: number };
+  fall?: { x: number; y: number; vx: number; vy: number };
   flashUntil: number;
 };
 
@@ -36,25 +39,20 @@ type JarGeom = {
   neckLen: number;
 };
 
-type Segment = {
-  body: Matter.Body;
-  ax: number;
-  ay: number;
-  bx: number;
-  by: number;
-};
-
 const COLORS = ["#6d5cff", "#4f8cff", "#38bdf8", "#a78bfa", "#f472b6", "#34d399", "#fb923c"];
 const GOLD = "#ffd24a";
-const FLIP = Math.PI * 0.62;
-const FLIP_MS = 1600;
-const AUTO_TILT_MAX = Math.PI * 0.18;
+// 부분 기울기: 완전 180° 금지(생존 버블이 기운 벽에 얹히는 현실감).
+// 0.78π(≈140°)면 주둥이가 병의 최저 영역이 되어 중력만으로 흐름이 주둥이로 모인다.
+const FLIP = Math.PI * 0.78;
+const FLIP_MS = 1400;
+const AUTO_TILT_MAX = Math.PI * 0.16;
 const AUTO_SHAKE_INTERVAL = 900;
+const GRAVITY = 1.15;
+const PHYS_DT = 1000 / 120; // 고정 소형 서브스텝(터널링 방지)
+const EXIT_MS = 320; // 넥 통과 스크립트 시간
 const BALL_CATEGORY = 0x0001;
 const WALL_CATEGORY = 0x0002;
-const GATE_CATEGORY = 0x0004;
-const BALL_MASK = BALL_CATEGORY | WALL_CATEGORY | GATE_CATEGORY;
-const TARGETED_MASK = BALL_CATEGORY | WALL_CATEGORY;
+const BALL_MASK = BALL_CATEGORY | WALL_CATEGORY;
 
 function hash01(s: string) {
   let h = 2166136261;
@@ -69,7 +67,8 @@ function easeInOut(t: number) {
   return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
 }
 
-function rotatePoint(cx: number, cy: number, x: number, y: number, angle: number) {
+// 병 중심 기준 로컬 오프셋(x,y)을 화면 좌표로(병이 angle만큼 회전해 보일 때).
+function toScreen(cx: number, cy: number, x: number, y: number, angle: number) {
   const c = Math.cos(angle);
   const s = Math.sin(angle);
   return { x: cx + x * c - y * s, y: cy + x * s + y * c };
@@ -88,8 +87,7 @@ export default function JarCanvas({
   const engineRef = useRef<Matter.Engine | null>(null);
   const ballsRef = useRef<Ball[]>([]);
   const byIdRef = useRef<Map<string, Ball>>(new Map());
-  const wallsRef = useRef<Segment[]>([]);
-  const gateRef = useRef<Matter.Body | null>(null);
+  const wallBodiesRef = useRef<Matter.Body[]>([]);
   const corkRef = useRef<Matter.Body | null>(null);
   const pendingRef = useRef<Entry[]>([]);
   const pendingIdsRef = useRef<Set<string>>(new Set());
@@ -102,9 +100,11 @@ export default function JarCanvas({
   const autoShakeAtRef = useRef<number>(0);
   const openElapsedRef = useRef<number>(0);
   const losersSnapRef = useRef<number>(0);
-  const targetedCountRef = useRef<number>(0);
+  const pluckedRef = useRef<number>(0);
   const lastNowRef = useRef<number>(0);
+  const physAccRef = useRef<number>(0);
   const wallKeyRef = useRef<string>("");
+  const recoveredRef = useRef<number>(0); // 병 밖 이탈 복구 누적(0이어야 정상)
   const rafRef = useRef<number>(0);
   const propsRef = useRef<Props>({ scene, entries, winnerKeys, corkOpen, shakeSeq, durationMs, tiltDeg });
   propsRef.current = { scene, entries, winnerKeys, corkOpen, shakeSeq, durationMs, tiltDeg };
@@ -116,10 +116,14 @@ export default function JarCanvas({
     if (!c2d) return;
     const ctx: CanvasRenderingContext2D = c2d;
 
+    // 핵심 아키텍처: 물리 세계에서 병은 "영원히 고정"이다(벽 이동 = 터널링·공중부양의 근원).
+    // 기울기(angle)는 (1) 중력 벡터 회전 gravity=(G sinθ, G cosθ) 와 (2) 렌더링 회전으로만 표현한다.
+    // 배출은 물리 통과가 아니라 스크립트(pluck)로 보장한다 — 넥 잼이 구조적으로 불가능.
     const engine = Matter.Engine.create({ enableSleeping: false });
     engine.gravity.x = 0;
-    engine.gravity.y = 0.72;
-    engine.timing.timeScale = 0.86;
+    engine.gravity.y = GRAVITY;
+    engine.positionIterations = 12;
+    engine.velocityIterations = 8;
     engineRef.current = engine;
 
     let W = 0;
@@ -146,13 +150,26 @@ export default function JarCanvas({
         cy: H * 0.5,
         RX: W * 0.44,
         RY,
-        mw: Math.max(baseRRef.current * 3.2, W * 0.065),
+        mw: Math.max(baseRRef.current * 4.4, W * 0.07),
         neckLen: RY * 0.5,
       };
     }
 
     function geom(): JarGeom {
       return fixedGeomRef.current ?? liveGeom();
+    }
+
+    // 추첨용 기하: 병을 줄이고 위로 올려, 기울었을 때 주둥이와 배출 낙하가 화면 안에 보이게.
+    function drawGeom(): JarGeom {
+      const RY = H * 0.34;
+      return {
+        cx: W / 2,
+        cy: H * 0.38,
+        RX: W * 0.3,
+        RY,
+        mw: Math.max(baseRRef.current * 4.4, W * 0.06),
+        neckLen: RY * 0.5,
+      };
     }
 
     function baseRadius(count: number) {
@@ -165,36 +182,65 @@ export default function JarCanvas({
       return COLORS[Math.floor(hash01(id + "c") * COLORS.length) % COLORS.length];
     }
 
-    function setBallGateMask(b: Ball) {
-      b.body.collisionFilter.category = BALL_CATEGORY;
-      b.body.collisionFilter.mask = b.targeted ? TARGETED_MASK : BALL_MASK;
+    function localOf(g: JarGeom, x: number, y: number) {
+      return { x: x - g.cx, y: y - g.cy };
     }
 
-    function spawn(e: Entry, baseR: number, g: JarGeom, mode: "inlet" | "body" = "inlet") {
-      const x = mode === "inlet"
-        ? g.cx + (hash01(e.id + "x") - 0.5) * g.mw * 1.05
-        : g.cx + (hash01(e.id + "x") - 0.5) * g.RX * 1.35;
-      const y = mode === "inlet"
-        ? g.cy - g.RY - g.neckLen * (0.2 + hash01(e.id + "y") * 0.18)
-        : g.cy - g.RY * (0.25 + hash01(e.id + "y") * 0.45);
-      const body = Matter.Bodies.circle(x, y, baseR * 0.7, {
+    function insideJar(g: JarGeom, lx: number, ly: number, r: number) {
+      const ex = lx / (g.RX + r);
+      const ey = ly / (g.RY + r);
+      if (ex * ex + ey * ey <= 1.03) return true;
+      if (Math.abs(lx) <= g.mw + r * 0.5 && ly >= -g.RY - g.neckLen - r * 2 && ly <= -g.RY * 0.5) return true;
+      // 주둥이 위 깔때기 영역(유입 낙하 구간) — 스폰 지점 포함해야 복구 루프가 안 생긴다.
+      const lipY = -g.RY - g.neckLen;
+      if (ly >= lipY - g.mw * 2.0 && ly < lipY && Math.abs(lx) <= g.mw * 2.5 + r) return true;
+      return false;
+    }
+
+    // 완전 내부(벽에서 떨어진 자유 공간) 판정 — 복구 투영 목표.
+    function strictlyInside(g: JarGeom, lx: number, ly: number, r: number) {
+      const ex = lx / Math.max(1, g.RX - r);
+      const ey = ly / Math.max(1, g.RY - r);
+      if (ex * ex + ey * ey <= 0.96) return true;
+      if (Math.abs(lx) <= g.mw - r && ly >= -g.RY - g.neckLen + r && ly <= -g.RY * 0.6) return true;
+      return false;
+    }
+
+    function inletPoint(g: JarGeom, seed: string) {
+      // 3레인 + 높이 스태거로 유입 처리량 확보(한 점 병목 방지).
+      const lane = Math.floor(hash01(seed + "lane") * 3) - 1; // -1,0,1
+      return {
+        x: g.cx + lane * g.mw * 0.55 + (hash01(seed + "x") - 0.5) * g.mw * 0.3,
+        y: g.cy - g.RY - g.neckLen - baseRRef.current * (1.6 + hash01(seed + "h") * 1.6),
+      };
+    }
+
+    function spawn(e: Entry, baseR: number, g: JarGeom, mode: "inlet" | "body") {
+      const p =
+        mode === "inlet"
+          ? inletPoint(g, e.id)
+          : {
+              x: g.cx + (hash01(e.id + "x") - 0.5) * g.RX * 1.2,
+              y: g.cy - g.RY * (0.15 + hash01(e.id + "y") * 0.5),
+            };
+      const body = Matter.Bodies.circle(p.x, p.y, baseR, {
         friction: 0.09,
         frictionStatic: 0.05,
-        frictionAir: 0.022,
-        restitution: 0.28,
+        frictionAir: 0.02,
+        restitution: 0.26,
         density: 0.004,
         collisionFilter: { category: BALL_CATEGORY, mask: BALL_MASK },
       });
-      Matter.Body.setVelocity(body, { x: (hash01(e.id + "vx") - 0.5) * 0.6, y: 1.4 });
+      Matter.Body.setVelocity(body, { x: (hash01(e.id + "vx") - 0.5) * 0.5, y: 1.6 });
       const b: Ball = {
         id: e.id,
         name: e.name,
         key: `${e.name}|${e.last4}`,
         body,
-        r: baseR * 0.7,
-        targetR: baseR,
+        r: baseR * 0.55,
+        physR: baseR,
         winner: false,
-        targeted: false,
+        phase: "phys",
         flashUntil: 0,
       };
       byIdRef.current.set(e.id, b);
@@ -213,104 +259,96 @@ export default function JarCanvas({
       };
     }
 
-    function makeSegment(ax: number, ay: number, bx: number, by: number, thickness: number, label: string): Segment {
+    function addSegment(g: JarGeom, ax: number, ay: number, bx: number, by: number, thickness: number, label: string) {
       const len = Math.hypot(bx - ax, by - ay);
-      const body = Matter.Bodies.rectangle(0, 0, len, thickness, wallOptions(label));
-      return { body, ax, ay, bx, by };
+      const body = Matter.Bodies.rectangle(
+        g.cx + (ax + bx) / 2,
+        g.cy + (ay + by) / 2,
+        len,
+        thickness,
+        wallOptions(label)
+      );
+      Matter.Body.setAngle(body, Math.atan2(by - ay, bx - ax));
+      wallBodiesRef.current.push(body);
     }
 
-    function updateSegment(seg: Segment, g: JarGeom, angle: number) {
-      const a = rotatePoint(g.cx, g.cy, seg.ax, seg.ay, angle);
-      const b = rotatePoint(g.cx, g.cy, seg.bx, seg.by, angle);
-      Matter.Body.setPosition(seg.body, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
-      Matter.Body.setAngle(seg.body, Math.atan2(b.y - a.y, b.x - a.x));
-    }
-
+    // 벽은 로컬 프레임에 "한 번" 만들고 다시는 움직이지 않는다.
     function buildWalls(g: JarGeom) {
-      const key = `${Math.round(W)}:${Math.round(H)}:${Math.round(g.mw)}:${Math.round(g.neckLen)}`;
+      const key = `${Math.round(W)}:${Math.round(H)}:${Math.round(g.mw)}:${Math.round(g.neckLen)}:${Math.round(baseRRef.current)}`;
       if (key === wallKeyRef.current) return;
       wallKeyRef.current = key;
 
-      Matter.Composite.remove(engine.world, wallsRef.current.map((w) => w.body));
-      if (gateRef.current) Matter.Composite.remove(engine.world, gateRef.current);
+      Matter.Composite.remove(engine.world, wallBodiesRef.current);
       if (corkRef.current) Matter.Composite.remove(engine.world, corkRef.current);
-      wallsRef.current = [];
+      wallBodiesRef.current = [];
 
-      const thickness = Math.max(14, baseRRef.current * 0.7);
-      const shoulderY = -g.RY * 0.15;
-      const wShoulder = g.RX * Math.sqrt(Math.max(0, 1 - (shoulderY / g.RY) ** 2));
+      // 벽 두께 = 볼 지름 이상(터널링 방지의 물리적 마지노선).
+      const thickness = Math.max(18, baseRRef.current * 2.1);
+      // 벽 중심을 두께 절반만큼 바깥에 두어, 내부 물리 공간 = 그려진 윤곽선과 일치시킨다.
+      // (윤곽 중심에 깔면 remap·투영이 벽 몸체와 겹쳐 밖으로 튕겨나간다 — 실측된 함정)
+      const off = thickness / 2;
+      const RXw = g.RX + off;
+      const RYw = g.RY + off;
+      const mwW = g.mw + off;
+      const shoulderY = -RYw * 0.15;
+      const wShoulder = RXw * Math.sqrt(Math.max(0, 1 - (shoulderY / RYw) ** 2));
       const outline: Array<{ y: number; half: number }> = [];
       for (let i = 0; i <= 28; i++) {
-        const y = g.RY - (i / 28) * (g.RY - shoulderY);
-        outline.push({ y, half: g.RX * Math.sqrt(Math.max(0, 1 - (y / g.RY) ** 2)) });
+        const y = RYw - (i / 28) * (RYw - shoulderY);
+        outline.push({ y, half: RXw * Math.sqrt(Math.max(0, 1 - (y / RYw) ** 2)) });
       }
       for (let i = 1; i <= 8; i++) {
         const t = i / 8;
-        outline.push({ y: shoulderY + (-g.RY - shoulderY) * t, half: wShoulder + (g.mw - wShoulder) * t });
+        outline.push({ y: shoulderY + (-RYw - shoulderY) * t, half: wShoulder + (mwW - wShoulder) * t });
       }
-      outline.push({ y: -g.RY - g.neckLen, half: g.mw });
+      outline.push({ y: -g.RY - g.neckLen, half: mwW });
 
       for (let i = 0; i < outline.length - 1; i++) {
         const a = outline[i];
         const b = outline[i + 1];
-        wallsRef.current.push(makeSegment(-a.half, a.y, -b.half, b.y, thickness, "jar-wall"));
-        wallsRef.current.push(makeSegment(a.half, a.y, b.half, b.y, thickness, "jar-wall"));
+        addSegment(g, -a.half, a.y, -b.half, b.y, thickness, "jar-wall");
+        addSegment(g, a.half, a.y, b.half, b.y, thickness, "jar-wall");
       }
-      wallsRef.current.push(makeSegment(-outline[0].half, outline[0].y, outline[0].half, outline[0].y, thickness, "jar-bottom"));
+      addSegment(g, -outline[0].half, outline[0].y, outline[0].half, outline[0].y, thickness, "jar-bottom");
+      // 주둥이 위 깔때기 입술: 유입 버블이 옆으로 새지 않게 밖으로 벌어진 가이드.
+      const lipY = -g.RY - g.neckLen;
+      addSegment(g, -mwW, lipY, -mwW * 2.4, lipY - g.mw * 1.7, thickness, "funnel-lip");
+      addSegment(g, mwW, lipY, mwW * 2.4, lipY - g.mw * 1.7, thickness, "funnel-lip");
 
-      gateRef.current = Matter.Bodies.rectangle(0, 0, g.mw * 1.15, thickness * 0.7, {
-        isStatic: true,
-        label: "winner-gate",
-        friction: 0.08,
-        restitution: 0.12,
-        collisionFilter: { category: GATE_CATEGORY, mask: BALL_CATEGORY },
-      });
-      corkRef.current = Matter.Bodies.rectangle(0, 0, g.mw * 2.3, thickness * 1.25, {
-        isStatic: true,
-        label: "cork",
-        friction: 0.08,
-        restitution: 0.1,
-        collisionFilter: { category: WALL_CATEGORY, mask: BALL_CATEGORY },
-      });
+      // 코르크: 주둥이 끝 마개. DRAWING에서 열기 전까지 전원 차단.
+      corkRef.current = Matter.Bodies.rectangle(
+        g.cx,
+        g.cy - g.RY - g.neckLen - Math.max(9, baseRRef.current * 0.55) - off,
+        g.mw * 2.3,
+        Math.max(16, baseRRef.current * 1.1),
+        {
+          isStatic: true,
+          label: "cork",
+          friction: 0.08,
+          restitution: 0.1,
+          collisionFilter: { category: WALL_CATEGORY, mask: 0 },
+        }
+      );
 
-      Matter.Composite.add(engine.world, [
-        ...wallsRef.current.map((w) => w.body),
-        gateRef.current,
-        corkRef.current,
-      ]);
+      Matter.Composite.add(engine.world, [...wallBodiesRef.current, corkRef.current]);
     }
 
-    function updateWalls(g: JarGeom, angle: number, drawing: boolean, corkOpenNow: boolean) {
-      for (const wall of wallsRef.current) updateSegment(wall, g, angle);
-      if (gateRef.current) {
-        const p = rotatePoint(g.cx, g.cy, 0, -g.RY - g.neckLen * 0.18, angle);
-        Matter.Body.setPosition(gateRef.current, p);
-        Matter.Body.setAngle(gateRef.current, angle);
-        gateRef.current.collisionFilter.mask = drawing ? BALL_CATEGORY : 0;
-      }
-      if (corkRef.current) {
-        const p = rotatePoint(g.cx, g.cy, 0, -g.RY - g.neckLen - baseRRef.current * 0.45, angle);
-        Matter.Body.setPosition(corkRef.current, p);
-        Matter.Body.setAngle(corkRef.current, angle);
-        corkRef.current.collisionFilter.mask = drawing && !corkOpenNow ? BALL_CATEGORY : 0;
-      }
-    }
-
-    function scaleBall(b: Ball, targetR: number) {
-      const next = b.r + (targetR - b.r) * 0.08;
-      const ratio = next / Math.max(0.1, b.r);
-      if (Math.abs(ratio - 1) > 0.002) {
-        Matter.Body.scale(b.body, ratio, ratio);
-        b.r = next;
-      }
-    }
-
-    function localOf(g: JarGeom, angle: number, x: number, y: number) {
-      const dx = x - g.cx;
-      const dy = y - g.cy;
-      const c = Math.cos(angle);
-      const s = Math.sin(angle);
-      return { x: dx * c + dy * s, y: -dx * s + dy * c };
+    // 탈락자 배출 시작: 물리에서 빼고(더미 자연 붕괴) 넥 통과를 스크립트로.
+    // 목구멍 후보만 뽑히므로 경로가 짧아 자연스럽고, 시간은 거리 비례.
+    function startExit(b: Ball, g: JarGeom, now: number) {
+      Matter.Composite.remove(engine.world, b.body);
+      const dist = Math.hypot(
+        b.body.position.x - g.cx,
+        b.body.position.y - (g.cy - g.RY - g.neckLen)
+      );
+      b.phase = "exit";
+      b.exit = {
+        fromX: b.body.position.x,
+        fromY: b.body.position.y,
+        t0: now,
+        dur: Math.min(700, Math.max(200, dist / 0.55)),
+      };
+      b.flashUntil = now + 260;
     }
 
     function drawBottle(g: JarGeom, angle: number, corkOpenNow: boolean, celebrate: boolean) {
@@ -352,7 +390,7 @@ export default function JarCanvas({
       const { scene, entries, winnerKeys, corkOpen, shakeSeq, durationMs, tiltDeg } = propsRef.current;
       const balls = ballsRef.current;
       const byId = byIdRef.current;
-      const dt = lastNowRef.current ? Math.min(50, now - lastNowRef.current) : 16;
+      const frameDt = lastNowRef.current ? Math.min(50, now - lastNowRef.current) : 16;
       lastNowRef.current = now;
 
       const drawing = scene === "DRAWING" || scene === "WINNERS";
@@ -365,7 +403,19 @@ export default function JarCanvas({
       }
       const baseR = baseRRef.current;
       const g = geom();
+      buildWalls(g);
 
+      // 물리 반지름이 시대에 뒤처지면(응모 증가로 baseR 축소) 한 번에 스냅 재조정.
+      for (const b of balls) {
+        if (b.phase !== "phys") continue;
+        if (Math.abs(b.physR - baseR) / baseR > 0.15) {
+          const ratio = baseR / b.physR;
+          Matter.Body.scale(b.body, ratio, ratio);
+          b.physR = baseR;
+        }
+      }
+
+      // 유입: 스폰 지점이 비어 있을 때만(백프레셔) — 겹침 폭발로 밖에 넘치는 것 원천 차단.
       if (scene === "QR" || scene === "COLLECTING") {
         for (const e of entries) {
           if (!byId.has(e.id) && !pendingIdsRef.current.has(e.id)) {
@@ -373,11 +423,29 @@ export default function JarCanvas({
             pendingRef.current.push(e);
           }
         }
-        const spawnBudget = Math.max(4, Math.min(16, Math.floor(entries.length / 35) + 4));
-        for (let i = 0; i < spawnBudget && pendingRef.current.length > 0; i++) {
-          const e = pendingRef.current.shift()!;
+        let budget = 10;
+        let scan = 0;
+        while (budget > 0 && scan < pendingRef.current.length) {
+          const e = pendingRef.current[scan];
+          const p = inletPoint(g, e.id);
+          let clear = true;
+          for (const b of balls) {
+            if (b.phase !== "phys") continue;
+            const dx = b.body.position.x - p.x;
+            const dy = b.body.position.y - p.y;
+            if (dx * dx + dy * dy < (baseR * 2.1) ** 2) {
+              clear = false;
+              break;
+            }
+          }
+          if (!clear) {
+            scan++;
+            continue;
+          }
+          pendingRef.current.splice(scan, 1);
           pendingIdsRef.current.delete(e.id);
           if (!byId.has(e.id)) spawn(e, baseR, g, "inlet");
+          budget--;
         }
       }
 
@@ -388,13 +456,24 @@ export default function JarCanvas({
           if (!byId.has(e.id)) spawn(e, baseR, liveGeom(), "body");
         }
         drawBaseRRef.current = baseRRef.current;
-        fixedGeomRef.current = liveGeom();
+        // 수집 기하 → 추첨 기하로 병을 재배치하고, 버블 좌표를 비율 매핑(1회성).
+        const gOld = liveGeom();
+        const gNew = drawGeom();
+        fixedGeomRef.current = gNew;
         wallKeyRef.current = "";
+        for (const b of balls) {
+          if (b.phase !== "phys") continue;
+          const lx = (b.body.position.x - gOld.cx) * (gNew.RX / gOld.RX);
+          const ly = (b.body.position.y - gOld.cy) * (gNew.RY / gOld.RY);
+          // 여유 0.85: 벽 몸체와의 겹침 배치 금지(겹치면 바깥으로 튕겨난다).
+          Matter.Body.setPosition(b.body, { x: gNew.cx + lx * 0.85, y: gNew.cy + ly * 0.85 });
+          Matter.Body.setVelocity(b.body, { x: 0, y: 0 });
+        }
         drawStartRef.current = now;
         churnedRef.current = false;
         autoShakeAtRef.current = now;
         openElapsedRef.current = 0;
-        targetedCountRef.current = 0;
+        pluckedRef.current = 0;
         losersSnapRef.current = 0;
       }
       if (!drawing) {
@@ -402,42 +481,66 @@ export default function JarCanvas({
         churnedRef.current = false;
         autoShakeAtRef.current = 0;
         openElapsedRef.current = 0;
-        targetedCountRef.current = 0;
+        pluckedRef.current = 0;
         losersSnapRef.current = 0;
       }
 
       const fe = drawStartRef.current === null ? 0 : (now - drawStartRef.current) / FLIP_MS;
       const openFrac = openElapsedRef.current / Math.max(1000, durationMs);
-      const autoTilt = drawing && corkOpen && winnerKeys.size > 0 ? AUTO_TILT_MAX * Math.min(1, Math.max(0, openFrac - 0.45) / 0.55) : 0;
-      const angle = (drawing ? FLIP * easeInOut(Math.min(1, Math.max(0, fe))) + autoTilt + (tiltDeg * Math.PI) / 180 : 0);
+      const autoTilt =
+        drawing && corkOpen && winnerKeys.size > 0
+          ? AUTO_TILT_MAX * Math.min(1, Math.max(0, openFrac - 0.45) / 0.55)
+          : 0;
+      const angle = drawing
+        ? FLIP * easeInOut(Math.min(1, Math.max(0, fe))) + autoTilt + (tiltDeg * Math.PI) / 180
+        : 0;
 
-      buildWalls(g);
-      let remainingLosers = 0;
+      // 기울기 = 중력 회전. 병은 물리적으로 고정.
+      engine.gravity.x = GRAVITY * Math.sin(angle);
+      engine.gravity.y = GRAVITY * Math.cos(angle);
+
+      let physLosers = 0;
+      let exiting = 0;
       for (const b of balls) {
         b.winner = winnerKeys.has(b.key);
-        if (!b.winner) remainingLosers++;
+        if (b.phase === "phys" && !b.winner) physLosers++;
+        if (b.phase === "exit") exiting++;
       }
-      const celebrate = drawing && winnerKeys.size > 0 && remainingLosers === 0;
+      const celebrate = drawing && winnerKeys.size > 0 && physLosers === 0 && exiting === 0;
       const holeOpen = drawing && winnerKeys.size > 0 && corkOpen && !celebrate;
-      updateWalls(g, angle, drawing, corkOpen);
+
+      // 코르크는 DRAWING 내내 물리 마개로 유지한다(시각적으로만 열림).
+      // 배출은 전부 스크립트(pluck)이므로 물리적 통과가 필요 없고, 이로써
+      // 당첨자가 열린 주둥이로 미끄러져 나가는 탈출·복구 루프가 원천 봉쇄된다.
+      if (corkRef.current) corkRef.current.collisionFilter.mask = drawing ? BALL_CATEGORY : 0;
 
       for (const b of balls) {
-        b.targetR = celebrate ? baseR * 1.5 : baseR;
-        scaleBall(b, b.targetR);
-        if (b.winner) {
-          b.targeted = false;
-          b.body.collisionFilter.mask = BALL_MASK;
-        } else {
-          setBallGateMask(b);
+        const targetVis = celebrate && b.winner ? baseR * 1.45 : baseR;
+        b.r += (targetVis - b.r) * 0.12;
+      }
+
+      // 당첨자는 넥에 들어가지 않게 몸통 쪽으로 밀어낸다(생존자가 기운 벽에 얹히는 연출 + 넥 막힘 방지).
+      // 기울기 극대(164°)의 중력(-0.94G)보다 강해야 실제로 밀려난다.
+      if (drawing && winnerKeys.size > 0) {
+        for (const b of balls) {
+          if (b.phase !== "phys" || !b.winner) continue;
+          const lx = b.body.position.x - g.cx;
+          const ly = b.body.position.y - g.cy;
+          // 넥 통로 안에서만 밀어낸다 — 어깨 전체를 밀면 당첨자 무리가
+          // 목구멍 앞 장벽이 되어 탈락자 공급을 막는다(꼬리 정체 실측).
+          if (ly < -g.RY * 0.5 && Math.abs(lx) < g.mw * 2.2) {
+            Matter.Body.applyForce(b.body, b.body.position, { x: 0, y: b.body.mass * 0.008 });
+          }
         }
       }
 
-      if (drawing && fe > 0.45 && !churnedRef.current) {
+      if (drawing && fe > 0.4 && !churnedRef.current) {
         churnedRef.current = true;
         for (const b of balls) {
+          if (b.phase !== "phys") continue;
           Matter.Body.setVelocity(b.body, {
-            x: b.body.velocity.x + (hash01(b.id + "cx") - 0.5) * 4.5,
-            y: b.body.velocity.y + (hash01(b.id + "cy") - 0.5) * 4.5,
+            x: b.body.velocity.x + (hash01(b.id + "cx") - 0.5) * 3.5,
+            y: b.body.velocity.y + (hash01(b.id + "cy") - 0.5) * 3.5,
           });
         }
       }
@@ -445,6 +548,7 @@ export default function JarCanvas({
       if (shakeSeq !== shakeRef.current) {
         shakeRef.current = shakeSeq;
         for (const b of balls) {
+          if (b.phase !== "phys") continue;
           Matter.Body.setVelocity(b.body, {
             x: b.body.velocity.x + (hash01(b.id + shakeSeq + "sx") - 0.5) * 6,
             y: b.body.velocity.y + (hash01(b.id + shakeSeq + "sy") - 0.5) * 6,
@@ -453,79 +557,197 @@ export default function JarCanvas({
       }
 
       if (holeOpen) {
-        if (losersSnapRef.current === 0) losersSnapRef.current = remainingLosers;
-        openElapsedRef.current += dt;
+        if (losersSnapRef.current === 0) losersSnapRef.current = physLosers;
+        openElapsedRef.current += frameDt;
         const frac = Math.min(1, openElapsedRef.current / Math.max(1000, durationMs));
         const scheduleFrac = Math.min(1, frac * 1.18);
         const targetGone = Math.floor(losersSnapRef.current * scheduleFrac);
-        const mouth = rotatePoint(g.cx, g.cy, 0, -g.RY - g.neckLen * 0.45, angle);
-        while (targetedCountRef.current < targetGone) {
+        const mouthX = g.cx;
+        const mouthY = g.cy - g.RY - g.neckLen;
+        // 탈락은 "주둥이 목구멍에 실제로 도달한" 버블만 — 깊숙한 버블을 총알처럼
+        // 뽑아내면 미리 정해진 각본처럼 보인다(관중 관점의 정직성). 공급이 늦어
+        // 스케줄이 밀리면 구역을 점진 확장해 완주는 보장한다.
+        const lag = Math.max(0, targetGone - pluckedRef.current);
+        const rawFrac = openElapsedRef.current / Math.max(1000, durationMs);
+        // 지연(lag) 또는 시간 초과 시 구역을 확장 — 초과가 커지면 병 전체를 허용해 완주를 보장.
+        const relax = Math.max(
+          Math.min(1, lag / Math.max(6, losersSnapRef.current * 0.08)),
+          Math.min(1, Math.max(0, rawFrac - 0.9) * 3)
+        );
+        const zoneY = -g.RY * (0.55 - 0.5 * relax); // 지연될수록 몸통 쪽까지 허용
+        const zoneX = g.mw * (1.8 + 4 * relax);
+        while (pluckedRef.current < targetGone) {
           let best: Ball | null = null;
           let bestD = Infinity;
           for (const b of balls) {
-            if (b.winner || b.targeted) continue;
-            const d = (b.body.position.x - mouth.x) ** 2 + (b.body.position.y - mouth.y) ** 2;
+            if (b.phase !== "phys" || b.winner) continue;
+            const lx = b.body.position.x - g.cx;
+            const ly = b.body.position.y - g.cy;
+            if (ly > zoneY || Math.abs(lx) > zoneX) continue; // 목구멍 밖 = 아직 순서 아님
+            const d = (b.body.position.x - mouthX) ** 2 + (b.body.position.y - mouthY) ** 2;
             if (d < bestD) {
               bestD = d;
               best = b;
             }
           }
-          if (!best) break;
-          best.targeted = true;
-          best.flashUntil = now + 300;
-          setBallGateMask(best);
-          targetedCountRef.current++;
+          if (!best) break; // 후보 없음 — 슬로싱으로 공급될 때까지 대기
+          startExit(best, g, now);
+          pluckedRef.current++;
         }
-        if (frac > 0.55 && remainingLosers > 0 && now - autoShakeAtRef.current > AUTO_SHAKE_INTERVAL) {
+        // 주둥이 방향 슬로싱: 랜덤 흔들기 대신 기울어진 병에서 내용물이
+        // 주둥이 쪽으로 쏠리는 자연스러운 공급 흐름을 만든다.
+        const feedInterval = lag > 0 ? 450 : AUTO_SHAKE_INTERVAL;
+        if (physLosers > 0 && now - autoShakeAtRef.current > feedInterval) {
           autoShakeAtRef.current = now;
           for (const b of balls) {
+            if (b.phase !== "phys" || b.winner) continue;
+            const dx = mouthX - b.body.position.x;
+            const dy = mouthY - b.body.position.y;
+            const len = Math.max(1, Math.hypot(dx, dy));
+            const k = 1.1 + hash01(b.id + Math.floor(now) + "f") * 1.4;
             Matter.Body.setVelocity(b.body, {
-              x: b.body.velocity.x + (hash01(b.id + Math.floor(now) + "ax") - 0.5) * 3.4,
-              y: b.body.velocity.y + (hash01(b.id + Math.floor(now) + "ay") - 0.5) * 3.4,
+              x: b.body.velocity.x + (dx / len) * k,
+              y: b.body.velocity.y + (dy / len) * k,
             });
           }
         }
       }
 
-      Matter.Engine.update(engine, dt);
-
-      if (scene === "QR" || scene === "COLLECTING") {
+      // 고정 소형 dt 서브스텝 + 속도 상한(볼이 한 스텝에 벽 두께 이상 이동 금지).
+      const maxV = Math.min(26, baseR * 1.7);
+      physAccRef.current = Math.min(physAccRef.current + frameDt, PHYS_DT * 4);
+      while (physAccRef.current >= PHYS_DT) {
+        physAccRef.current -= PHYS_DT;
         for (const b of balls) {
-          const p = b.body.position;
-          const lp = localOf(g, 0, p.x, p.y);
-          const spilledFromInlet = lp.y < -g.RY - g.neckLen * 0.08 && Math.abs(lp.x) > g.mw * 1.45;
-          const outOfFrame = p.x < -80 || p.x > W + 80 || p.y < -120 || p.y > H + 160;
-          if (spilledFromInlet || outOfFrame) {
-            const x = g.cx + (hash01(b.id + "rx") - 0.5) * g.mw * 0.9;
-            const y = g.cy - g.RY - g.neckLen * 0.28;
-            Matter.Body.setPosition(b.body, { x, y });
-            Matter.Body.setVelocity(b.body, { x: 0, y: 1.2 });
-            Matter.Body.setAngularVelocity(b.body, 0);
+          if (b.phase !== "phys") continue;
+          const v = b.body.velocity;
+          const sp = Math.hypot(v.x, v.y);
+          if (sp > maxV) {
+            Matter.Body.setVelocity(b.body, { x: (v.x / sp) * maxV, y: (v.y / sp) * maxV });
           }
+        }
+        Matter.Engine.update(engine, PHYS_DT);
+      }
+
+      // exit 스크립트 진행: 현 위치 → 주둥이 바깥(로컬), 끝나면 화면 자유낙하로 전환.
+      const mouthOutX = 0;
+      const mouthOutY = -g.RY - g.neckLen - baseR * 1.6;
+      for (const b of balls) {
+        if (b.phase === "exit" && b.exit) {
+          const p = Math.min(1, (now - b.exit.t0) / b.exit.dur);
+          const ease = p * p * (3 - 2 * p);
+          const fx = b.exit.fromX - g.cx;
+          const fy = b.exit.fromY - g.cy;
+          const lx = fx + (mouthOutX - fx) * ease;
+          const ly = fy + (mouthOutY - fy) * ease;
+          if (p >= 1) {
+            const ps = toScreen(g.cx, g.cy, lx, ly, angle);
+            // 넥 축 방향(로컬 -y)의 화면 방향으로 초기 속도.
+            const dir = toScreen(0, 0, 0, -1, angle);
+            b.phase = "fall";
+            b.fall = { x: ps.x, y: ps.y, vx: dir.x * 3.2, vy: dir.y * 3.2 };
+            b.exit = undefined;
+          }
+        }
+        if (b.phase === "fall" && b.fall) {
+          b.fall.vy += 0.0011 * frameDt * frameDt * 0.5 + 0.28 * (frameDt / 16.7);
+          b.fall.x += b.fall.vx * (frameDt / 16.7);
+          b.fall.y += b.fall.vy * (frameDt / 16.7);
         }
       }
 
+      // 이탈 복구(물리 볼 전원): 어떤 이유로든 병 밖 = 즉시 안으로. "병 밖 버블 0" 불변식.
+      // 순간이동 티가 안 나게, 중심 방향으로 최소한만 끌어당겨 안으로 재투영한다.
+      for (const b of balls) {
+        if (b.phase !== "phys") continue;
+        const lp = localOf(g, b.body.position.x, b.body.position.y);
+        if (!insideJar(g, lp.x, lp.y, b.physR)) {
+          if (scene === "QR" || scene === "COLLECTING") {
+            const p = inletPoint(g, b.id + String(Math.floor(now / 500)));
+            Matter.Body.setPosition(b.body, p);
+            Matter.Body.setVelocity(b.body, { x: 0, y: 1.4 });
+          } else {
+            let lx = lp.x;
+            let ly = lp.y;
+            let ok = false;
+            for (let k = 0; k < 24; k++) {
+              lx *= 0.92;
+              ly *= 0.92;
+              if (strictlyInside(g, lx, ly, b.physR)) {
+                ok = true;
+                break;
+              }
+            }
+            if (!ok) {
+              lx = (hash01(b.id + "fx") - 0.5) * g.RX * 0.5;
+              ly = (hash01(b.id + "fy") - 0.5) * g.RY * 0.4;
+            }
+            Matter.Body.setPosition(b.body, { x: g.cx + lx, y: g.cy + ly });
+            Matter.Body.setVelocity(b.body, { x: 0, y: 0 });
+          }
+          Matter.Body.setAngularVelocity(b.body, 0);
+          recoveredRef.current++;
+        }
+      }
+
+      // 낙하 버블은 화면 밖으로 나가면 제거.
       for (let i = balls.length - 1; i >= 0; i--) {
         const b = balls[i];
-        const p = b.body.position;
-        const lp = localOf(g, angle, p.x, p.y);
-        if (b.targeted && (lp.y < -g.RY - g.neckLen - b.r || p.y - b.r > H + 160 || p.x < -160 || p.x > W + 160)) {
-          Matter.Composite.remove(engine.world, b.body);
+        if (b.phase !== "fall" || !b.fall) continue;
+        if (b.fall.y - b.r > H + 80 || b.fall.x < -160 || b.fall.x > W + 160) {
           byId.delete(b.id);
           balls.splice(i, 1);
         }
       }
 
+      // 자동 검증용 계측(무해한 읽기 전용 메트릭).
+      (window as unknown as Record<string, unknown>).__jar = {
+        scene,
+        n: balls.length,
+        physLosers,
+        exiting,
+        winners: balls.filter((b) => b.winner).length,
+        plucked: pluckedRef.current,
+        recovered: recoveredRef.current,
+        pending: pendingRef.current.length,
+        angleDeg: Math.round((angle * 180) / Math.PI),
+        openMs: Math.round(openElapsedRef.current),
+        celebrate,
+      };
+
       ctx.clearRect(0, 0, W, H);
       drawBottle(g, angle, corkOpen, celebrate);
 
-      for (const b of balls) {
-        const p = b.body.position;
+      // 물리 버블 먼저, 배출(exit/fall) 버블은 마지막에 — 항상 맨 위 레이어로
+      // 그려서 "다른 버블 뒤로 통과하는" 착시를 없앤다.
+      const renderOrder = [
+        ...balls.filter((b) => b.phase === "phys"),
+        ...balls.filter((b) => b.phase !== "phys"),
+      ];
+      for (const b of renderOrder) {
+        let px: number;
+        let py: number;
+        if (b.phase === "fall" && b.fall) {
+          px = b.fall.x;
+          py = b.fall.y;
+        } else if (b.phase === "exit" && b.exit) {
+          const p = Math.min(1, (now - b.exit.t0) / b.exit.dur);
+          const ease = p * p * (3 - 2 * p);
+          const fx = b.exit.fromX - g.cx;
+          const fy = b.exit.fromY - g.cy;
+          const ps = toScreen(g.cx, g.cy, fx + (mouthOutX - fx) * ease, fy + (mouthOutY - fy) * ease, angle);
+          px = ps.x;
+          py = ps.y;
+        } else {
+          const ps = toScreen(g.cx, g.cy, b.body.position.x - g.cx, b.body.position.y - g.cy, angle);
+          px = ps.x;
+          py = ps.y;
+        }
         const flashing = now < b.flashUntil;
-        const gold = celebrate;
+        const gold = celebrate && b.winner;
         ctx.globalAlpha = 1;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, b.r, 0, Math.PI * 2);
+        ctx.arc(px, py, b.r, 0, Math.PI * 2);
         ctx.fillStyle = gold ? GOLD : colorFor(b.id);
         if (gold || flashing) {
           ctx.shadowColor = gold ? GOLD : "#ffffff";
@@ -536,14 +758,14 @@ export default function JarCanvas({
         ctx.fill();
         ctx.shadowBlur = 0;
 
-        const fs = b.r * 0.6;
-        if (fs >= 9) {
-          ctx.fillStyle = gold ? "#1a1400" : "rgba(255,255,255,0.96)";
-          ctx.font = `700 ${Math.round(fs)}px -apple-system, "Noto Sans KR", sans-serif`;
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText(b.name, p.x, p.y);
-        }
+        // 이름은 항상 표기: 버블 지름에 여백 최소로 우겨넣는다(초대형 스크린 전제).
+        const chars = Math.max(2, b.name.length);
+        const fs = Math.max(4, Math.min(b.r * 1.05, (b.r * 2 * 0.94) / (chars * 0.92)));
+        ctx.fillStyle = gold ? "#1a1400" : "rgba(255,255,255,0.96)";
+        ctx.font = `700 ${fs.toFixed(1)}px -apple-system, "Noto Sans KR", sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(b.name, px, py);
       }
 
       rafRef.current = requestAnimationFrame(step);
@@ -563,7 +785,9 @@ export default function JarCanvas({
     if (scene !== "QR") return;
     const engine = engineRef.current;
     if (engine) {
-      for (const b of ballsRef.current) Matter.Composite.remove(engine.world, b.body);
+      for (const b of ballsRef.current) {
+        if (b.phase === "phys") Matter.Composite.remove(engine.world, b.body);
+      }
     }
     ballsRef.current = [];
     byIdRef.current.clear();
@@ -574,7 +798,7 @@ export default function JarCanvas({
     wallKeyRef.current = "";
     drawStartRef.current = null;
     openElapsedRef.current = 0;
-    targetedCountRef.current = 0;
+    pluckedRef.current = 0;
     losersSnapRef.current = 0;
     autoShakeAtRef.current = 0;
     churnedRef.current = false;
