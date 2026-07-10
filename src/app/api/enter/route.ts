@@ -6,8 +6,9 @@ export const dynamic = "force-dynamic";
 
 // 매우 관대한 IP 가드: 현장 wifi는 NAT로 수백 명이 IP 1개를 공유하므로
 // 정상 사용자를 막지 않도록 느슨하게 두고, 폭주 봇만 차단한다.
+// 400명이 QR 공개 직후 1~2분에 몰려도(같은 NAT IP) 걸리지 않을 한도.
 const WINDOW_MS = 60_000;
-const MAX_PER_WINDOW = 300;
+const MAX_PER_WINDOW = 1200;
 const hits = new Map<string, number[]>();
 
 function rateLimited(ip: string): boolean {

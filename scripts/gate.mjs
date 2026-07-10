@@ -72,6 +72,7 @@ async function main() {
   check("가상 응모 20명 투입", seed.json?.ok === true && seed.json?.seeded === 20, JSON.stringify(seed.json));
   s = await api("/api/state");
   check("투입 후 총 50명", s.json?.entryCount === 50, String(s.json?.entryCount));
+  check("state에 가상 응모 수 노출(잔존 경고용)", s.json?.rehearsalCount === 20, String(s.json?.rehearsalCount));
   const clear = await api("/api/rehearsal", { method: "POST", body: { action: "clear" }, token: TOKEN });
   check("가상 응모만 삭제(20명)", clear.json?.ok === true && clear.json?.deleted === 20, JSON.stringify(clear.json));
   s = await api("/api/state");
@@ -94,6 +95,16 @@ async function main() {
   check("마감 후 응모 거부 409", afterFreeze.status === 409, String(afterFreeze.status));
   const seedFrozen = await api("/api/rehearsal", { method: "POST", body: { action: "seed", count: 5 }, token: TOKEN });
   check("마감 후 가상 응모 거부 409", seedFrozen.status === 409, String(seedFrozen.status));
+
+  // 5.5) 조기 마감 복구: FROZEN→COLLECTING 재개 → 응모 다시 열림 → 재마감
+  const reopen = await api("/api/scene", { method: "POST", body: { to: "COLLECTING" }, token: TOKEN });
+  check("마감 취소(FROZEN→COLLECTING) 허용", reopen.json?.ok === true, JSON.stringify(reopen.json));
+  s = await api("/api/state");
+  check("재개 후 frozenAt 해제", s.json?.frozenAt === null, String(s.json?.frozenAt));
+  const reopenEnter = await api("/api/enter", { method: "POST", body: { name: "재개확인", last4: "8888" } });
+  check("재개 후 응모 다시 허용", reopenEnter.json?.ok === true, JSON.stringify(reopenEnter.json));
+  const refreeze = await api("/api/scene", { method: "POST", body: { to: "FROZEN" }, token: TOKEN });
+  check("재마감 허용", refreeze.json?.ok === true, JSON.stringify(refreeze.json));
 
   // 6) 불법 전이 거부
   const illegal = await api("/api/scene", { method: "POST", body: { to: "WINNERS" }, token: TOKEN });
@@ -150,7 +161,7 @@ async function main() {
   check("force 리셋 성공 + 스냅샷", forced.json?.ok === true && !!forced.json?.snapshot, JSON.stringify(forced.json?.snapshot));
   check(
     "리셋 응답에 스냅샷 데이터 포함(브라우저 백업용)",
-    (forced.json?.snapshotData?.entries ?? []).length === 30 &&
+    (forced.json?.snapshotData?.entries ?? []).length === 31 &&
       (forced.json?.snapshotData?.winners ?? []).length === 23,
     `entries=${forced.json?.snapshotData?.entries?.length} winners=${forced.json?.snapshotData?.winners?.length}`
   );
@@ -158,6 +169,16 @@ async function main() {
   s = await api("/api/state");
   check("리셋 후 씬 QR", s.json?.scene === "QR", s.json?.scene);
   check("리셋 후 응모 0", s.json?.entryCount === 0, String(s.json?.entryCount));
+
+  // 12) 응모 0명 추첨 거부(무대 교착 방지) — 빈 DB로 FROZEN까지 가서 확인
+  await api("/api/scene", { method: "POST", body: { to: "COLLECTING" }, token: TOKEN });
+  await api("/api/scene", { method: "POST", body: { to: "FROZEN" }, token: TOKEN });
+  const empty = await api("/api/draw", { method: "POST", body: { count: 5 }, token: TOKEN });
+  check("응모 0명 추첨 거부 409(no_candidates)", empty.status === 409 && empty.json?.error === "no_candidates", `${empty.status} ${empty.json?.error}`);
+  s = await api("/api/state");
+  check("거부 후 씬 FROZEN 유지(교착 없음)", s.json?.scene === "FROZEN", s.json?.scene);
+  const finalReset = await api("/api/reset", { method: "POST", body: { confirm: "RESET" }, token: TOKEN });
+  check("최종 리셋 → 클린 종료", finalReset.json?.ok === true, JSON.stringify(finalReset.json?.cleared));
 
   console.log(`\nGATE: ${pass} passed, ${fail} failed`);
   process.exit(fail === 0 ? 0 : 1);

@@ -49,6 +49,9 @@ export async function POST(req: Request) {
       select: { id: true },
     });
 
+    // 후보 0명이면 추첨 자체를 거부 — 씬만 DRAWING으로 넘어가 무대가 교착되는 것 방지.
+    if (candidates.length === 0) return null;
+
     const picked = shuffle(candidates.map((c) => c.id)).slice(0, count);
 
     const lastDraw = await tx.draw.findFirst({ orderBy: { batch: "desc" } });
@@ -93,5 +96,8 @@ export async function POST(req: Request) {
     };
   });
 
+  if (result === null) {
+    return Response.json({ ok: false, error: "no_candidates" }, { status: 409 });
+  }
   return Response.json({ ok: true, ...result });
 }

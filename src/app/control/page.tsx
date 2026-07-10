@@ -6,11 +6,21 @@ type State = {
   ok: boolean;
   scene: string;
   entryCount: number;
+  rehearsalCount?: number;
   qr?: { visible: boolean; size: string; corner: string };
   cork?: boolean;
   drawDuration?: number;
   tiltDeg?: number;
   winners: { rank: number }[];
+};
+
+// 서버 에러 코드 → 관리자가 바로 이해할 문구.
+const ERROR_LABEL: Record<string, string> = {
+  no_candidates: "추첨할 응모자가 없습니다 (응모 0명)",
+  illegal_transition: "지금 단계에서는 허용되지 않는 전환입니다",
+  live_locked: "추첨 진행 중에는 잠겨 있습니다",
+  closed: "응모가 닫힌 상태입니다",
+  invalid_count: "인원 수를 확인하세요",
 };
 
 // 타임아웃 있는 fetch: 응답이 끊긴 채 pending으로 남으면 폴링 루프가 영구 정지한다(실측).
@@ -34,9 +44,12 @@ export default function ControlPage() {
   const [state, setState] = useState<State | null>(null);
   const [msg, setMsg] = useState<string>("");
   const [addN, setAddN] = useState("3");
+  const [drawN, setDrawN] = useState("20");
   const [durInput, setDurInput] = useState("30");
   const [seedN, setSeedN] = useState("20");
   const stopped = useRef(false);
+  // 요청 잠금: 버튼 연타로 추첨이 두 번 나가는 사고(당첨 40명) 방지.
+  const inFlight = useRef(false);
 
   // 토큰은 로컬에만 보관(URL/서버 로그에 안 남김).
   useEffect(() => {
@@ -76,20 +89,31 @@ export default function ControlPage() {
         setMsg("토큰을 먼저 입력하세요.");
         return null;
       }
+      if (inFlight.current) {
+        setMsg("처리 중입니다 — 잠시 후 다시 시도하세요.");
+        return null;
+      }
+      inFlight.current = true;
       try {
+        // 타임아웃 없으면 요청이 pending으로 매달릴 때 리모컨이 조작 불능이 된다.
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 8000);
         const res = await fetch(path, {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-admin-token": savedToken },
           body: JSON.stringify(body),
-        });
+          signal: ctrl.signal,
+        }).finally(() => clearTimeout(timer));
         const data = await res.json();
         if (res.status === 401) setMsg("토큰이 틀렸습니다.");
-        else if (!data.ok) setMsg(`실패: ${data.error ?? res.status}`);
+        else if (!data.ok) setMsg(`실패: ${ERROR_LABEL[String(data.error)] ?? data.error ?? res.status}`);
         else setMsg("완료");
         return data;
       } catch {
-        setMsg("네트워크 오류");
+        setMsg("네트워크 오류 — 반영 여부를 위 상태에서 확인 후 다시 시도하세요.");
         return null;
+      } finally {
+        inFlight.current = false;
       }
     },
     [savedToken]
@@ -178,6 +202,26 @@ export default function ControlPage() {
         <div>확정 당첨: <b>{winnerCount}</b>명</div>
       </div>
 
+      {/* 리허설 데이터 잔존 경고: 본행사에 가상 인물이 당첨되는 사고 방지 */}
+      {(state?.rehearsalCount ?? 0) > 0 && (
+        <div style={{ marginTop: 12, padding: 14, borderRadius: 12, background: "#3b1113", border: "1px solid #7f1d1d", fontSize: 14 }}>
+          <b style={{ color: "#fca5a5" }}>⚠ 가상(리허설) 응모 {state?.rehearsalCount}명이 포함되어 있습니다.</b>
+          <div style={{ opacity: 0.8, marginTop: 4 }}>본행사 전에 전체 리셋 또는 가상 응모 삭제가 필요합니다.</div>
+          {(scene === "QR" || scene === "COLLECTING" || scene === "FROZEN") && (
+            <button
+              style={{ ...miniBtn(false), marginTop: 10, width: "100%", background: "#7f1d1d", border: "1px solid #b91c1c" }}
+              onClick={async () => {
+                if (!confirm("가상 응모만 삭제합니다(실제 응모는 유지). 진행할까요?")) return;
+                const d = await call("/api/rehearsal", { action: "clear" });
+                if (d?.ok) setMsg(`가상 응모 ${d.deleted}명 삭제됨`);
+              }}
+            >
+              가상 응모 {state?.rehearsalCount}명 지금 삭제
+            </button>
+          )}
+        </div>
+      )}
+
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 20 }}>
         {scene === "QR" && (
           <button style={btn("#3a3a4a")} onClick={() => call("/api/scene", { to: "COLLECTING" })}>
@@ -215,14 +259,33 @@ export default function ControlPage() {
             <button style={btn("#4f46e5")} onClick={() => call("/api/jar", { action: "shake" })}>
               항아리 흔들기 (추첨 전, 몇 번이든)
             </button>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                value={drawN}
+                onChange={(e) => setDrawN(e.target.value.replace(/\D/g, "").slice(0, 3))}
+                inputMode="numeric"
+                style={{ ...input, width: 80, marginTop: 0, textAlign: "center" }}
+              />
+              <button
+                style={{ ...btn("#059669"), flex: 1 }}
+                onClick={() => {
+                  const n = parseInt(drawN, 10);
+                  if (!(n > 0)) return setMsg("추첨 인원을 확인하세요.");
+                  const warn = (state?.rehearsalCount ?? 0) > 0 ? `\n⚠ 가상(리허설) 응모 ${state?.rehearsalCount}명이 포함되어 있습니다!` : "";
+                  if (confirm(`당첨자 ${n}명을 추첨합니다. 병이 뒤집힙니다.${warn} 진행할까요?`)) runDraw(n);
+                }}
+              >
+                추첨 시작 ({drawN || "?"}명)
+              </button>
+            </div>
             <button
-              style={btn("#059669")}
+              style={btn("#3a3a4a")}
               onClick={() => {
-                if (confirm("당첨자 20명을 추첨합니다. 병이 뒤집힙니다. 진행할까요?"))
-                  runDraw(20);
+                if (confirm("마감을 취소하고 응모를 다시 받습니다. 진행할까요?"))
+                  call("/api/scene", { to: "COLLECTING" });
               }}
             >
-              추첨 시작 (20명)
+              마감 취소 (응모 재개)
             </button>
           </>
         )}
@@ -358,13 +421,16 @@ export default function ControlPage() {
         <button
           style={btn("#7f1d1d")}
           onClick={() => {
-            if (
-              confirm("전체 응모/당첨 데이터를 초기화합니다. (스냅샷 자동 저장) 진행할까요?") &&
-              confirm("정말 초기화할까요? 되돌릴 수 없습니다.")
-            ) {
-              const live = scene === "DRAWING" || scene === "WINNERS";
-              runReset(live);
+            if (!confirm("전체 응모/당첨 데이터를 초기화합니다. (스냅샷 자동 저장) 진행할까요?")) return;
+            const live = scene === "DRAWING" || scene === "WINNERS";
+            if (live) {
+              // 라이브(추첨 결과 존재) 중엔 타이핑 확인 — confirm 두 번은 실수로 뚫린다.
+              const typed = prompt("추첨 결과가 이미 있습니다! 명단이 삭제됩니다.\n정말 초기화하려면 RESET 을 입력하세요:");
+              if (typed !== "RESET") return setMsg("리셋 취소됨");
+            } else if (!confirm("정말 초기화할까요? 되돌릴 수 없습니다.")) {
+              return;
             }
+            runReset(live);
           }}
         >
           전체 리셋 (스냅샷 후 초기화)

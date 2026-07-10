@@ -38,7 +38,8 @@ export async function POST(req: Request) {
     where: { id: 1 },
     data: {
       scene: to,
-      frozenAt: to === "FROZEN" ? new Date() : state.frozenAt,
+      // 마감 취소(FROZEN→COLLECTING)면 마감 시각도 지운다.
+      frozenAt: to === "FROZEN" ? new Date() : to === "COLLECTING" ? null : state.frozenAt,
     },
   });
 

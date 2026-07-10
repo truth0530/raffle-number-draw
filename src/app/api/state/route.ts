@@ -8,6 +8,8 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const state = await getState();
   const entryCount = await prisma.entry.count();
+  // 리허설(가상) 응모 잔존 감시 — 본행사에 가상 인물이 당첨되는 사고 방지용 경고 데이터.
+  const rehearsalCount = await prisma.entry.count({ where: { ip: "rehearsal" } });
 
   const reveal = REVEAL_SCENES.includes(state.scene as Scene);
 
@@ -30,6 +32,7 @@ export async function GET() {
     ok: true,
     scene: state.scene,
     entryCount,
+    rehearsalCount,
     frozenAt: state.frozenAt,
     qr: { visible: state.qrVisible, size: state.qrSize, corner: state.qrCorner },
     cork: state.corkOpen,

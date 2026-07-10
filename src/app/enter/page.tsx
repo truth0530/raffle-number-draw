@@ -22,11 +22,15 @@ export default function EnterPage() {
 
     setBusy(true);
     try {
+      // 현장 wifi에서 요청이 pending으로 매달리면 "전송 중…"에 영구 고착된다 — 10초 타임아웃.
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 10000);
       const res = await fetch("/api/enter", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: cleanName, last4: cleanLast4 }),
-      });
+        signal: ctrl.signal,
+      }).finally(() => clearTimeout(timer));
       const data = await res.json();
       if (res.ok && data.ok) {
         router.replace("/done");

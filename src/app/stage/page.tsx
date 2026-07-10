@@ -29,6 +29,7 @@ export default function StagePage() {
   const [state, setState] = useState<State | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [qr, setQr] = useState<string>("");
+  const [qrUrl, setQrUrl] = useState<string>("");
   const [plain, setPlain] = useState(false);
   const [shakeSeq, setShakeSeq] = useState(0);
   const lastShakeAt = useRef<string | null>(null);
@@ -36,10 +37,44 @@ export default function StagePage() {
 
   useEffect(() => {
     setPlain(new URLSearchParams(window.location.search).get("plain") === "1");
-    const url = process.env.NEXT_PUBLIC_EVENT_URL || window.location.origin + "/enter";
+    // 환경변수가 localhost 등으로 잘못 박혀 있으면(빌드 시점 실수) 관중 QR이 전부 무반응이 된다.
+    // 현재 접속 도메인이 로컬이 아닌데 env가 로컬을 가리키면 무시하고 현재 도메인을 쓴다.
+    const env = process.env.NEXT_PUBLIC_EVENT_URL || "";
+    const isLocalEnv = /localhost|127\.0\.0\.1/.test(env);
+    const onLocal = /localhost|127\.0\.0\.1/.test(window.location.hostname);
+    const url = env && (!isLocalEnv || onLocal) ? env : window.location.origin + "/enter";
+    setQrUrl(url);
     QRCode.toDataURL(url, { width: 620, margin: 1, errorCorrectionLevel: "M" })
       .then(setQr)
       .catch(() => {});
+  }, []);
+
+  // 무대 노트북 절전/화면꺼짐 방지(Wake Lock). 탭이 다시 보이면 재획득.
+  useEffect(() => {
+    type WakeLockSentinelLike = { release?: () => Promise<void> } | null;
+    let lock: WakeLockSentinelLike = null;
+    let stop = false;
+    const nav = navigator as Navigator & {
+      wakeLock?: { request: (t: "screen") => Promise<NonNullable<WakeLockSentinelLike>> };
+    };
+    async function acquire() {
+      try {
+        if (!nav.wakeLock || stop) return;
+        lock = await nav.wakeLock.request("screen");
+      } catch {
+        /* 미지원/저전력 모드 — 무해 */
+      }
+    }
+    acquire();
+    const onVis = () => {
+      if (document.visibilityState === "visible") acquire();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      stop = true;
+      document.removeEventListener("visibilitychange", onVis);
+      lock?.release?.().catch(() => {});
+    };
   }, []);
 
   useEffect(() => {
@@ -117,7 +152,7 @@ export default function StagePage() {
       {/* QR 오버레이 — 관리자가 크기/위치/표시 조절 */}
       {showQr && (
         <div style={qrBoxStyle(qrState)}>
-          <img src={qr} alt="응모 QR" style={{ width: "100%", height: "100%", borderRadius: 16, background: "#fff", padding: "4%" }} />
+          <img src={qr} alt="응모 QR" title={qrUrl} style={{ width: "100%", height: "100%", borderRadius: 16, background: "#fff", padding: "4%" }} />
           {qrState.size !== "small" && (
             <div style={{ textAlign: "center", marginTop: 10, fontSize: qrState.size === "half" ? 24 : 16, fontWeight: 700, textShadow: "0 2px 12px #000" }}>
               QR을 스캔해 응모하세요
