@@ -16,6 +16,7 @@ import {
   actReset,
   defaultState,
 } from "@/lib/numberStore";
+import { btn as uiBtn, ghostDanger, panel as uiPanel, panelTitle, inputBase } from "@/lib/ui";
 
 export default function NumbersAdmin() {
   const [state, setState] = useState<NState>(defaultState);
@@ -80,12 +81,18 @@ export default function NumbersAdmin() {
 
   return (
     <main style={wrap}>
-      <h1 style={h1}>번호 추첨 관리자 (발표자 모드)</h1>
-      <button style={{ ...btn("#0ea5e9"), marginTop: 12 }} onClick={openShow}>
-        슬라이드쇼 창 열기 ↗ (다른 모니터로 옮기고 클릭하면 전체화면)
-      </button>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <h1 style={{ ...h1, flex: 1, minWidth: 200 }}>번호 추첨 관리자</h1>
+        <button style={{ ...uiBtn("sky", { size: "sm" }), width: "auto", whiteSpace: "nowrap" }} onClick={openShow}>
+          슬라이드쇼 창 열기 ↗
+        </button>
+      </div>
+      <p style={{ fontSize: 12, opacity: 0.45, marginTop: 4 }}>
+        슬라이드쇼 창을 프로젝터 모니터로 옮기고 클릭하면 전체화면이 됩니다.
+      </p>
 
       <div style={panel}>
+        <div style={panelTitle}>추첨 설정</div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <span style={{ fontSize: 14, opacity: 0.7 }}>번호 1~</span>
           <input value={rangeInput} onChange={(e) => setRangeInput(e.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" style={{ ...input, width: 84, marginTop: 0 }} />
@@ -116,10 +123,10 @@ export default function NumbersAdmin() {
       </div>
 
       <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-        <button style={{ ...btn(state.drawing ? "#3a3a4a" : "#6d5cff"), flex: 1 }} onClick={startDraw} disabled={state.drawing}>
-          {state.drawing ? `추첨 중… (${numbers.length}/${state.drawCount})` : "추첨"}
+        <button style={{ ...uiBtn(state.drawing ? "slate" : "violet", { size: "lg" }), flex: 1 }} onClick={startDraw} disabled={state.drawing}>
+          {state.drawing ? `추첨 중… (${numbers.length}/${state.drawCount})` : "추첨 시작"}
         </button>
-        <button style={{ ...btn(absent.length > 0 ? "#059669" : "#3a3a4a"), flex: 1 }} onClick={() => update(actFill)} disabled={absent.length === 0 || state.drawing}>
+        <button style={{ ...uiBtn(absent.length > 0 ? "green" : "slate", { size: "lg" }), flex: 1 }} onClick={() => update(actFill)} disabled={absent.length === 0 || state.drawing}>
           채우기 {absent.length > 0 ? `(없음 ${absent.length}개 대체)` : ""}
         </button>
       </div>
@@ -160,7 +167,7 @@ export default function NumbersAdmin() {
       )}
 
       <div style={{ marginTop: 26, borderTop: "1px solid #222", paddingTop: 14 }}>
-        <button style={btn("#7f1d1d")} onClick={() => { if (confirm("전체 초기화할까요?")) update(actReset); }}>전체 리셋</button>
+        <button style={ghostDanger} onClick={() => { if (confirm("전체 초기화할까요?")) update(actReset); }}>전체 리셋</button>
       </div>
       <p style={{ marginTop: 10, fontSize: 12, opacity: 0.4 }}>표출 화면: /numbers/show · 서버 없이 이 브라우저 안에서만 동기화됩니다.</p>
     </main>
@@ -169,21 +176,42 @@ export default function NumbersAdmin() {
 
 const wrap: React.CSSProperties = { maxWidth: 720, margin: "0 auto", padding: 20, minHeight: "100dvh", color: "#f5f5f7" };
 const h1: React.CSSProperties = { fontSize: 22, fontWeight: 800 };
-const input: React.CSSProperties = { marginTop: 12, padding: "12px 14px", fontSize: 16, borderRadius: 12, border: "1px solid #2a2a35", background: "#15151d", color: "#fff" };
-const panel: React.CSSProperties = { marginTop: 14, padding: 14, borderRadius: 14, background: "#141420", border: "1px solid #24242f" };
-function btn(bg: string): React.CSSProperties {
-  return { padding: "15px", fontSize: 17, fontWeight: 800, borderRadius: 12, border: "none", background: bg, color: "#fff", cursor: "pointer", width: "100%" };
-}
+const input: React.CSSProperties = { ...inputBase, padding: "10px 12px" };
+const panel: React.CSSProperties = { ...uiPanel, marginTop: 14 };
 function mini(): React.CSSProperties {
-  return { padding: "10px 14px", fontSize: 14, fontWeight: 700, borderRadius: 10, border: "1px solid #8f7bff", background: "#2a2555", color: "#fff", cursor: "pointer" };
+  return { padding: "10px 14px", fontSize: 14, fontWeight: 700, borderRadius: 10, border: "1px solid #9f92ff88", background: "linear-gradient(180deg,#372f6e,#2a2555)", color: "#fff", cursor: "pointer" };
 }
 function modeBtn(active: boolean, color: string): React.CSSProperties {
-  return { flex: 1, padding: "14px", fontSize: 16, fontWeight: 800, borderRadius: 12, border: active ? `2px solid ${color}` : "2px solid #2a2a35", background: active ? color : "#1a1a24", color: "#fff", cursor: "pointer" };
+  return {
+    flex: 1,
+    padding: "13px",
+    fontSize: 15.5,
+    fontWeight: 800,
+    borderRadius: 12,
+    border: active ? `2px solid ${color}` : "2px solid #2a2a35",
+    background: active ? `linear-gradient(180deg, ${color}, ${color}cc)` : "#1a1a24",
+    color: active ? "#fff" : "#c7c7d4",
+    cursor: "pointer",
+    boxShadow: active ? "inset 0 1px 0 rgba(255,255,255,0.18), 0 3px 10px rgba(0,0,0,0.3)" : "none",
+  };
 }
+// 번호표 칩 — 실물 번호표처럼: 대기(금색 티켓) / 받음(파랑 확정) / 없음(빨강 취소선)
 function chip(it: NumItem): React.CSSProperties {
-  const base: React.CSSProperties = { position: "relative", padding: "14px 4px", fontSize: 22, fontWeight: 800, borderRadius: 12, cursor: "pointer", border: "1px solid #2a2a35" };
-  if (it.status === "absent") return { ...base, background: "rgba(180,30,40,0.3)", color: "#fecaca", border: "2px solid #ef4444", textDecoration: "line-through" };
-  if (it.status === "received") return { ...base, background: "#1e293b", color: "#dbeafe", border: "2px solid #3b82f6" };
-  if (it.added) return { ...base, background: "#14532d", color: "#bbf7d0", border: "2px solid #4ade80" };
-  return { ...base, background: "#1a1a24", color: "#ffd24a" };
+  const base: React.CSSProperties = {
+    position: "relative",
+    padding: "14px 4px",
+    fontSize: 22,
+    fontWeight: 900,
+    borderRadius: 12,
+    cursor: "pointer",
+    border: "1px solid #2a2a35",
+    boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
+  };
+  if (it.status === "absent")
+    return { ...base, background: "linear-gradient(180deg, rgba(190,40,50,0.35), rgba(140,25,35,0.3))", color: "#fecaca", border: "2px solid #ef4444", textDecoration: "line-through", textDecorationThickness: 2.5 };
+  if (it.status === "received")
+    return { ...base, background: "linear-gradient(180deg,#2b3b66,#1e293b)", color: "#dbeafe", border: "2px solid #3b82f6" };
+  if (it.added)
+    return { ...base, background: "linear-gradient(180deg,#1c6b3c,#14532d)", color: "#bbf7d0", border: "2px solid #4ade80" };
+  return { ...base, background: "linear-gradient(180deg,#2a2618,#1c1a12)", color: "#ffd24a", border: "1px solid #ffd24a44" };
 }

@@ -148,11 +148,13 @@ function buttonStyle(busy: boolean): React.CSSProperties {
     marginTop: 8,
     padding: "18px",
     fontSize: 19,
-    fontWeight: 700,
+    fontWeight: 800,
     borderRadius: 14,
-    border: "none",
-    background: busy ? "#3a3a4a" : "#6d5cff",
+    border: busy ? "1px solid #3a3a4a" : "1px solid #9f92ff55",
+    background: busy ? "#3a3a4a" : "linear-gradient(180deg,#7a68ff,#5847e6)",
     color: "#fff",
     cursor: busy ? "default" : "pointer",
+    boxShadow: busy ? "none" : "inset 0 1px 0 rgba(255,255,255,0.16), 0 3px 10px rgba(0,0,0,0.35)",
+    textShadow: "0 1px 2px rgba(0,0,0,0.35)",
   };
 }
