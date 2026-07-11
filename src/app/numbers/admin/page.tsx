@@ -36,6 +36,12 @@ export default function NumbersAdmin() {
   const [speedInput, setSpeedInput] = useState("1.0");
   const [mode, setMode] = useState<Status>("received");
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 네이티브 confirm()/alert() 은 브라우저가 전체화면을 강제 해제한다 — 같은 브라우저의
+  // 슬라이드쇼(2번 모니터) 전체화면이 추첨 시작/리셋 때마다 풀리는 버그의 원인. 대신
+  // 페이지 안(React) 모달로 확인받으면 전체화면이 유지된다.
+  const [confirmBox, setConfirmBox] = useState<{ msg: string; onOk: () => void } | null>(null);
+  const [alertBox, setAlertBox] = useState<string | null>(null);
+  const askConfirm = useCallback((msg: string, onOk: () => void) => setConfirmBox({ msg, onOk }), []);
 
   useEffect(() => {
     const s = loadState();
@@ -57,8 +63,7 @@ export default function NumbersAdmin() {
     saveState(next);
   }, []);
 
-  const startDraw = useCallback(() => {
-    if (!confirm("새로 추첨합니다(기존 초기화). 진행할까요?")) return;
+  const beginDraw = useCallback(() => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
@@ -74,14 +79,18 @@ export default function NumbersAdmin() {
     }, ms);
   }, [update]);
 
+  const startDraw = useCallback(() => {
+    askConfirm("새로 추첨합니다(기존 초기화). 진행할까요?", beginDraw);
+  }, [askConfirm, beginDraw]);
+
   function openShow() {
     const w = window.open(
       "/numbers/show",
       "raffle_show",
       "popup=yes,width=1400,height=900,left=120,top=80,toolbar=no,menubar=no,location=no,status=no,scrollbars=no,resizable=yes"
     );
-    // 팝업 차단 시 무반응으로 끝나지 않게.
-    if (!w) alert("팝업이 차단되었습니다. 브라우저 팝업을 허용하거나 주소창에 /numbers/show 를 직접 입력하세요.");
+    // 팝업 차단 시 무반응으로 끝나지 않게(네이티브 alert 은 전체화면을 깨므로 페이지 모달로).
+    if (!w) setAlertBox("팝업이 차단되었습니다. 브라우저 팝업을 허용하거나 주소창에 /numbers/show 를 직접 입력하세요.");
   }
 
   const numbers = state.numbers;
@@ -105,9 +114,7 @@ export default function NumbersAdmin() {
         </button>
         <button
           style={{ ...ghostDanger, width: "auto", padding: "9px 12px", fontSize: 13.5, whiteSpace: "nowrap" }}
-          onClick={() => {
-            if (confirm("전체 초기화할까요?")) update(actReset);
-          }}
+          onClick={() => askConfirm("전체 초기화할까요?", () => update(actReset))}
         >
           전체 리셋
         </button>
@@ -196,6 +203,45 @@ export default function NumbersAdmin() {
           </div>
         </div>
       )}
+
+      {/* 페이지 내 확인 모달 — 네이티브 confirm 대체(전체화면 유지) */}
+      {confirmBox && (
+        <div style={modalBackdrop} onClick={() => setConfirmBox(null)}>
+          <div style={modalCard} onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.5 }}>{confirmBox.msg}</div>
+            <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+              <button
+                style={{ ...uiBtn("slate"), flex: 1 }}
+                onClick={() => setConfirmBox(null)}
+              >
+                취소
+              </button>
+              <button
+                style={{ ...uiBtn("violet"), flex: 1 }}
+                onClick={() => {
+                  const fn = confirmBox.onOk;
+                  setConfirmBox(null);
+                  fn();
+                }}
+              >
+                확인
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 페이지 내 알림 모달 — 네이티브 alert 대체(전체화면 유지) */}
+      {alertBox && (
+        <div style={modalBackdrop} onClick={() => setAlertBox(null)}>
+          <div style={modalCard} onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontSize: 15.5, fontWeight: 600, lineHeight: 1.55 }}>{alertBox}</div>
+            <button style={{ ...uiBtn("violet"), width: "100%", marginTop: 20 }} onClick={() => setAlertBox(null)}>
+              확인
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
@@ -271,4 +317,24 @@ const trayChip: React.CSSProperties = {
   color: "#fda4af",
   border: "1px solid rgba(244,63,94,0.4)",
   cursor: "pointer",
+};
+const modalBackdrop: React.CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  zIndex: 100,
+  background: "rgba(0,0,0,0.6)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 24,
+};
+const modalCard: React.CSSProperties = {
+  width: "100%",
+  maxWidth: 380,
+  padding: "24px 22px",
+  borderRadius: 16,
+  background: "#15151d",
+  border: "1px solid #2a2a35",
+  color: "#f5f5f7",
+  boxShadow: "0 20px 60px rgba(0,0,0,0.6)",
 };

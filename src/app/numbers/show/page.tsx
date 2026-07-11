@@ -16,7 +16,7 @@ function fitCols(w: number, h: number, n: number, aspect = 1.35) {
 export default function NumbersShow() {
   const [state, setState] = useState<NState>(defaultState);
   const [vp, setVp] = useState({ w: 1280, h: 800 });
-  const [showHint, setShowHint] = useState(true);
+  const [isFs, setIsFs] = useState(false);
   const drawingRef = useRef(false);
   const rangeRef = useRef(400);
   const rainRef = useRef<HTMLCanvasElement | null>(null);
@@ -26,6 +26,15 @@ export default function NumbersShow() {
     onResize();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // 전체화면 상태 추적 — 어떤 이유로든 해제되면(네이티브 대화상자 등) 복구 안내를 다시 띄운다.
+  // 화면 아무 곳이나 클릭하면 goFullscreen 이 실행되므로 한 번의 클릭으로 복귀된다.
+  useEffect(() => {
+    const onFs = () => setIsFs(!!document.fullscreenElement);
+    onFs();
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
   }, []);
 
   useEffect(() => {
@@ -126,7 +135,6 @@ export default function NumbersShow() {
   }, []);
 
   function goFullscreen() {
-    setShowHint(false);
     document.documentElement.requestFullscreen?.().catch(() => {});
   }
 
@@ -151,11 +159,33 @@ export default function NumbersShow() {
     >
       <canvas ref={rainRef} style={{ position: "fixed", inset: 0, zIndex: 0, pointerEvents: "none" }} />
 
+      {/* 전체화면이 아니면(=어떤 이유로 풀렸으면) 항상 복구 안내. 화면 클릭으로 즉시 복귀. */}
+      {!isFs && (main.length > 0 || drawing) && (
+        <div
+          style={{
+            position: "fixed",
+            top: 14,
+            right: 16,
+            zIndex: 5,
+            padding: "8px 16px",
+            borderRadius: 999,
+            background: "rgba(109,92,255,0.22)",
+            border: "1px solid rgba(109,92,255,0.55)",
+            color: "#c9c2ff",
+            fontSize: 15,
+            fontWeight: 700,
+            pointerEvents: "none",
+          }}
+        >
+          화면을 클릭하면 전체화면
+        </div>
+      )}
+
       <section style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, minWidth: 0, position: "relative", zIndex: 1 }}>
         {!drawing && main.length === 0 ? (
           <div style={{ textAlign: "center", color: "#8f7bff" }}>
             <div style={{ fontSize: "min(5vw, 52px)", fontWeight: 800, opacity: 0.7 }}>추첨을 기다리는 중…</div>
-            {showHint && <div style={{ marginTop: 18, fontSize: "min(2.4vw, 22px)", opacity: 0.45 }}>화면을 클릭하면 전체화면</div>}
+            {!isFs && <div style={{ marginTop: 18, fontSize: "min(2.4vw, 22px)", opacity: 0.45 }}>화면을 클릭하면 전체화면</div>}
           </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, ${cardW}px)`, gap: 14, justifyContent: "center", alignContent: "center" }}>
