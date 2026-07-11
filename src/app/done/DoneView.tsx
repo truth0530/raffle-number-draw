@@ -80,10 +80,23 @@ export default function DoneView({ mode }: { mode: "live" | "test" }) {
   const winners = state?.winners ?? [];
   const enterHref = isTest ? "/test/enter" : "/enter";
 
+  // 한 번 명단이 공개되면(WINNERS 목격) 그 사실을 래치한다. 이후 관리자가 추가추첨
+  // 연출로 잠시 DRAWING으로 되돌려도 이미 공개된 개인 결과(당첨/미당첨)를 계속 보여줘,
+  // "내 당첨이 갑자기 사라졌다"는 항의를 원천 차단한다. 첫 추첨의 서스펜스는
+  // revealed=false 동안 유지되므로 그대로 보존된다(사전 유출 없음).
+  const [revealed, setRevealed] = useState(false);
+  useEffect(() => {
+    if (scene === "WINNERS") setRevealed(true);
+  }, [scene]);
+
   function matchWin(e: MyEntry): Winner | undefined {
-    return winners.find(
-      (w) => (e.entryId && w.entryId === e.entryId) || (w.name === e.name && w.last4 === e.last4)
-    );
+    // entryId가 있으면 그것만으로 매칭한다. 이름+번호 폴백을 함께 쓰면, 리셋된 옛 세대의
+    // 응모(stale entryId)가 새 행사에서 우연히 같은 이름+뒤4자리로 응모·당첨한 타인과
+    // 매칭돼 "false 당첨"이 뜰 수 있다(교차 이벤트 오탐). entryId는 행사별로 유일하므로
+    // 옛 id는 새 당첨자와 절대 안 겹친다 = 폴링 타이밍과 무관하게 오탐 원천 차단.
+    // 폴백은 entryId가 없을 때만(중복응모 복구 실패 등 희귀 케이스) 최선노력으로 쓴다.
+    if (e.entryId) return winners.find((w) => w.entryId === e.entryId);
+    return winners.find((w) => w.name === e.name && w.last4 === e.last4);
   }
 
   // localStorage 로딩 전 첫 렌더에 "내역이 없습니다"가 한 프레임 번쩍이는 것 방지 —
@@ -117,8 +130,8 @@ export default function DoneView({ mode }: { mode: "live" | "test" }) {
     );
   }
 
-  // 명단 공개 — 개인 결과 표시
-  if (scene === "WINNERS") {
+  // 명단 공개 — 개인 결과 표시. 한 번 공개된 뒤엔 추가추첨으로 DRAWING에 되돌아가도 유지.
+  if (scene === "WINNERS" || (revealed && scene === "DRAWING")) {
     const results = mine.map((e) => ({ e, win: matchWin(e) }));
     const anyWin = results.some((r) => r.win);
     return (

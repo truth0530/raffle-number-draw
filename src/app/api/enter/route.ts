@@ -78,9 +78,14 @@ export async function POST(req: Request) {
     // P2002 = unique(name,last4) 위반 → 이미 응모로 간주(멱등). 충돌은 로그로 남겨 당일 수동 판별.
     if (e && typeof e === "object" && "code" in e && (e as { code?: string }).code === "P2002") {
       await prisma.collisionLog.create({ data: { name, last4, ip } }).catch(() => {});
-      const existing = await prisma.entry
-        .findUnique({ where: { name_last4: { name, last4 } }, select: { id: true } })
-        .catch(() => null);
+      // P2002는 행이 반드시 존재함을 보장한다 — findUnique가 null이면 일시적 오류이므로 한 번 재시도.
+      // entryId가 null로 저장되면 폰의 당첨 매칭이 이름+번호 폴백에 의존하게 돼(교차 이벤트
+      // 유령 당첨 위험), 여기서 확실한 id를 확보하는 것이 정합성의 근원 방어다.
+      const lookup = () =>
+        prisma.entry
+          .findUnique({ where: { name_last4: { name, last4 } }, select: { id: true } })
+          .catch(() => null);
+      const existing = (await lookup()) ?? (await lookup());
       return Response.json({ ok: true, duplicate: true, entryId: existing?.id ?? null });
     }
     return Response.json({ ok: false, error: "server_error" }, { status: 500 });
