@@ -175,6 +175,19 @@ export default function ControlView({ mode }: { mode: "live" | "test" }) {
     setMsg("토큰 저장됨");
   }
 
+  // 전체 리셋 — 헤더(항상 보임)에서 호출. 라이브(추첨 결과 존재) 중엔 RESET 타이핑 확인.
+  function doReset() {
+    if (!confirm("전체 응모/당첨 데이터를 초기화합니다. (스냅샷 자동 저장) 진행할까요?")) return;
+    const live = scene === "DRAWING" || scene === "WINNERS";
+    if (live) {
+      const typed = prompt("추첨 결과가 이미 있습니다! 명단이 삭제됩니다.\n정말 초기화하려면 RESET 을 입력하세요:");
+      if (typed !== "RESET") return setMsg("리셋 취소됨");
+    } else if (!confirm("정말 초기화할까요? 되돌릴 수 없습니다.")) {
+      return;
+    }
+    runReset(live);
+  }
+
   // 무대(프로젝터) 창 — 리모컨에서 연다. 관리자가 /stage 주소를 외울 필요 없음.
   function openStage() {
     const path = isTest ? "/test/stage" : "/stage";
@@ -281,6 +294,13 @@ export default function ControlView({ mode }: { mode: "live" | "test" }) {
         </h1>
         <button style={{ ...btn("sky", { size: "sm" }), width: "auto", whiteSpace: "nowrap" }} onClick={openStage}>
           무대 화면 ↗
+        </button>
+        {/* 전체 리셋 — 항상 보이게 헤더에 고정(내용이 길어도 스크롤 없이 접근). */}
+        <button
+          style={{ ...btn("red", { size: "sm" }), width: "auto", whiteSpace: "nowrap" }}
+          onClick={doReset}
+        >
+          전체 리셋
         </button>
       </div>
       {isTest && (
@@ -600,26 +620,6 @@ export default function ControlView({ mode }: { mode: "live" | "test" }) {
           </div>
         </div>
       )}
-
-      <div style={{ marginTop: "auto", paddingTop: 10 }}>
-        <button
-          style={ghostDanger}
-          onClick={() => {
-            if (!confirm("전체 응모/당첨 데이터를 초기화합니다. (스냅샷 자동 저장) 진행할까요?")) return;
-            const live = scene === "DRAWING" || scene === "WINNERS";
-            if (live) {
-              // 라이브(추첨 결과 존재) 중엔 타이핑 확인 — confirm 두 번은 실수로 뚫린다.
-              const typed = prompt("추첨 결과가 이미 있습니다! 명단이 삭제됩니다.\n정말 초기화하려면 RESET 을 입력하세요:");
-              if (typed !== "RESET") return setMsg("리셋 취소됨");
-            } else if (!confirm("정말 초기화할까요? 되돌릴 수 없습니다.")) {
-              return;
-            }
-            runReset(live);
-          }}
-        >
-          전체 리셋 (스냅샷 후 초기화)
-        </button>
-      </div>
 
       {/* 결과 토스트 — 스크롤 없이 항상 보이게 화면 하단 고정 */}
       {msg && (
