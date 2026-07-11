@@ -35,6 +35,7 @@ type SimDB = {
   qrVisible: boolean;
   qrSize: string;
   qrCorner: string;
+  qrPreview: boolean;
   corkOpen: boolean;
   shakeAt: string | null;
   drawDuration: number;
@@ -55,6 +56,7 @@ function defaultDB(): SimDB {
     qrVisible: true,
     qrSize: "half",
     qrCorner: "center",
+    qrPreview: true,
     corkOpen: false,
     shakeAt: null,
     drawDuration: 30,
@@ -137,7 +139,7 @@ export async function simGetState(): Promise<Json> {
     rehearsalCount: db.entries.filter((e) => e.ip === "rehearsal").length,
     collisionCount: db.collisions,
     frozenAt: db.frozenAt,
-    qr: { visible: db.qrVisible, size: db.qrSize, corner: db.qrCorner },
+    qr: { visible: db.qrVisible, size: db.qrSize, corner: db.qrCorner, preview: db.qrPreview },
     cork: db.corkOpen,
     shakeAt: db.shakeAt,
     drawDuration: db.drawDuration,
@@ -239,8 +241,9 @@ export async function simPost(path: string, body: Json): Promise<Res> {
     if (typeof body.visible === "boolean") db.qrVisible = body.visible;
     if (typeof body.size === "string" && ["half", "medium", "small"].includes(body.size)) db.qrSize = body.size;
     if (typeof body.corner === "string" && ["center", "tr"].includes(body.corner)) db.qrCorner = body.corner;
+    if (typeof body.preview === "boolean") db.qrPreview = body.preview;
     save(db);
-    return ok({ qr: { visible: db.qrVisible, size: db.qrSize, corner: db.qrCorner } });
+    return ok({ qr: { visible: db.qrVisible, size: db.qrSize, corner: db.qrCorner, preview: db.qrPreview } });
   }
 
   if (path === "/api/rehearsal") {

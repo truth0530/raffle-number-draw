@@ -16,7 +16,7 @@ type State = {
   entryCount: number;
   rehearsalCount?: number;
   collisionCount?: number;
-  qr?: { visible: boolean; size: string; corner: string };
+  qr?: { visible: boolean; size: string; corner: string; preview?: boolean };
   cork?: boolean;
   drawDuration?: number;
   tiltDeg?: number;
@@ -344,12 +344,36 @@ export default function ControlView({ mode }: { mode: "live" | "test" }) {
               항아리만
             </button>
           </div>
-          {preset === "both" && (
-            <div style={{ display: "flex", gap: 6, marginTop: 6, alignItems: "center" }}>
-              <span style={{ fontSize: 12, opacity: 0.55, flex: "0 0 auto" }}>QR 크기</span>
-              <button style={chip(qr?.size === "medium")} onClick={() => call("/api/display", { size: "medium" })}>중간</button>
-              <button style={chip(qr?.size === "small")} onClick={() => call("/api/display", { size: "small" })}>작게</button>
-            </div>
+          {qr?.visible !== false && (
+            <>
+              {/* QR 위치·크기 미세 조정 — 프리셋과 무관하게 항상 가능 */}
+              <div style={{ display: "flex", gap: 6, marginTop: 6, alignItems: "center" }}>
+                <span style={{ fontSize: 12, opacity: 0.55, flex: "0 0 auto" }}>QR 위치</span>
+                <button style={chip(qr?.corner === "center")} onClick={() => call("/api/display", { corner: "center" })}>가운데</button>
+                <button style={chip(qr?.corner === "tr")} onClick={() => call("/api/display", { corner: "tr" })}>우측 상단</button>
+              </div>
+              <div style={{ display: "flex", gap: 6, marginTop: 6, alignItems: "center" }}>
+                <span style={{ fontSize: 12, opacity: 0.55, flex: "0 0 auto" }}>QR 크기</span>
+                <button style={chip(qr?.size === "half")} onClick={() => call("/api/display", { size: "half" })}>크게</button>
+                <button style={chip(qr?.size === "medium")} onClick={() => call("/api/display", { size: "medium" })}>중간</button>
+                <button style={chip(qr?.size === "small")} onClick={() => call("/api/display", { size: "small" })}>작게</button>
+              </div>
+              {/* 입력폼 미리보기 토글 — 작게(small)에서는 무대가 표시 공간이 없어 자동 생략됨 */}
+              <label style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={qr?.preview !== false}
+                  onChange={(e) => call("/api/display", { preview: e.target.checked })}
+                  style={{ width: 17, height: 17, accentColor: "#6d5cff" }}
+                />
+                입력폼 미리보기 함께 표시
+                {qr?.corner === "tr" ? (
+                  <span style={{ opacity: 0.5, fontWeight: 500 }}>(우측 상단에서는 생략)</span>
+                ) : qr?.size === "small" ? (
+                  <span style={{ opacity: 0.5, fontWeight: 500 }}>(작게에서는 생략)</span>
+                ) : null}
+              </label>
+            </>
           )}
         </div>
       )}

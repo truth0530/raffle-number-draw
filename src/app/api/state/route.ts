@@ -37,7 +37,7 @@ export async function GET() {
     rehearsalCount,
     collisionCount,
     frozenAt: state.frozenAt,
-    qr: { visible: state.qrVisible, size: state.qrSize, corner: state.qrCorner },
+    qr: { visible: state.qrVisible, size: state.qrSize, corner: state.qrCorner, preview: state.qrPreview },
     cork: state.corkOpen,
     shakeAt: state.shakeAt,
     drawDuration: state.drawDuration,

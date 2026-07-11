@@ -66,7 +66,7 @@ export async function POST(req: Request) {
     prisma.collisionLog.deleteMany(),
     prisma.eventState.update({
       where: { id: 1 },
-      data: { scene: "QR", frozenAt: null, qrVisible: true, qrSize: "half", qrCorner: "center", corkOpen: false, shakeAt: null, tiltDeg: 0 },
+      data: { scene: "QR", frozenAt: null, qrVisible: true, qrSize: "half", qrCorner: "center", qrPreview: true, corkOpen: false, shakeAt: null, tiltDeg: 0 },
     }),
   ]);
 

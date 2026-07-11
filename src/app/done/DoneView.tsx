@@ -7,7 +7,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { simGetState } from "@/lib/simRaffle";
+import { simGetState, simGetEntries } from "@/lib/simRaffle";
 import { loadMyEntries, clearMyEntries, MyEntry } from "@/lib/myEntries";
 import { colorFor, bubbleFontSize, BUBBLE_FONT_FAMILY, BUBBLE_NAME_COLOR, BUBBLE_COLORS } from "@/lib/bubbleStyle";
 
@@ -23,36 +23,49 @@ function fetchT(url: string, ms = 4000): Promise<Response> {
 export default function DoneView({ mode }: { mode: "live" | "test" }) {
   const isTest = mode === "test";
   const [mine, setMine] = useState<MyEntry[]>([]);
+  const [mineLoaded, setMineLoaded] = useState(false);
   const [state, setState] = useState<State | null>(null);
   const [stale, setStale] = useState(false); // 행사 리셋으로 내 응모가 사라진 상태
   const stopped = useRef(false);
-  const seenCount = useRef(0);
 
   useEffect(() => {
     setMine(loadMyEntries(mode));
+    setMineLoaded(true);
   }, [mode]);
 
   // 폴링: 관중 수백 명이 이 화면을 열어두므로 라이브는 5초+지터로 느슨하게.
   useEffect(() => {
     stopped.current = false;
+    const myList = loadMyEntries(mode);
+    const myIds = myList.map((e) => e.entryId).filter((id): id is string => !!id);
     async function poll() {
       while (!stopped.current) {
+        // 당첨 표시는 이 화면의 최우선 기능 — /api/state를 먼저 독립적으로 받아 즉시 반영한다.
+        // 리셋 감지용 /api/entries는 별도로 시도해, 그 실패가 당첨 공개를 지연시키지 않게 한다.
         try {
-          let data: State;
-          if (isTest) {
-            data = (await simGetState()) as unknown as State;
-          } else {
-            const res = await fetchT("/api/state");
-            data = await res.json();
-          }
-          if (data.ok) {
-            // 리셋 감지: 응모가 있었는데(내 폰 기록 존재) 서버가 처음 상태로 돌아감.
-            if (data.entryCount > 0) seenCount.current = Math.max(seenCount.current, data.entryCount);
-            setStale(seenCount.current > 0 && data.scene === "QR" && data.entryCount === 0);
-            setState(data);
-          }
+          const data: State = isTest
+            ? ((await simGetState()) as unknown as State)
+            : await (await fetchT("/api/state")).json();
+          if (data.ok) setState(data);
         } catch {
           /* 다음 주기에 재시도 */
+        }
+        // 리셋 감지(정합성의 핵심): 내 응모 entryId가 서버 응모 목록에서 전부 사라졌으면
+        // 행사가 리셋된 것 = 내 응모는 더 이상 유효하지 않다. seenCount 휴리스틱은
+        // 새로고침·타인 신규응모에 취약해 서버 존재 여부로 직접 판정한다.
+        // 목록을 못 받았거나 내 entryId가 하나도 없으면 판정 보류(오탐 방지).
+        if (myIds.length > 0) {
+          try {
+            const ents = isTest
+              ? ((await simGetEntries()) as unknown as { ok: boolean; entries: { id: string }[] })
+              : ((await (await fetchT("/api/entries")).json()) as { ok: boolean; entries: { id: string }[] });
+            if (ents.ok) {
+              const serverIds = new Set(ents.entries.map((e) => e.id));
+              setStale(!myIds.some((id) => serverIds.has(id)));
+            }
+          } catch {
+            /* 리셋 감지는 다음 주기에 — 당첨 표시(setState)는 이미 위에서 반영됨 */
+          }
         }
         await new Promise((r) => setTimeout(r, isTest ? 1500 : 5000 + Math.random() * 2000));
       }
@@ -71,6 +84,12 @@ export default function DoneView({ mode }: { mode: "live" | "test" }) {
     return winners.find(
       (w) => (e.entryId && w.entryId === e.entryId) || (w.name === e.name && w.last4 === e.last4)
     );
+  }
+
+  // localStorage 로딩 전 첫 렌더에 "내역이 없습니다"가 한 프레임 번쩍이는 것 방지 —
+  // 방금 응모한 사람이 순간적으로 그 문구를 보면 응모가 날아간 줄 오해한다.
+  if (!mineLoaded) {
+    return <Wrap isTest={isTest}>{null}</Wrap>;
   }
 
   if (mine.length === 0) {

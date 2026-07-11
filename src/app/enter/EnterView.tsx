@@ -9,7 +9,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { simPost, simGetState } from "@/lib/simRaffle";
+import { simPost, simGetState, simGetEntries } from "@/lib/simRaffle";
 import { addMyEntry, loadMyEntries } from "@/lib/myEntries";
 
 function fetchT(url: string, ms = 4000): Promise<Response> {
@@ -31,9 +31,35 @@ export default function EnterView({ mode }: { mode: "live" | "test" }) {
 
   const doneHref = isTest ? "/test/enter/done" : "/done";
 
+  // "이 폰으로 N명 응모됨" 배지는 서버에 실제 남아 있는 응모만 센다 — 리셋된 옛 세대의
+  // localStorage 유령 기록을 세면(예: 1차 응모 폰이 2차에 재방문) 응모 안 한 사람을
+  // 응모한 것처럼 오인시킨다(사용자 지적 #1). /done의 stale 판정과 동일한 근거(서버 존재).
   useEffect(() => {
-    setMineCount(loadMyEntries(mode).length);
-  }, [mode]);
+    let cancelled = false;
+    async function count() {
+      const mine = loadMyEntries(mode);
+      const myIds = mine.map((e) => e.entryId).filter((id): id is string => !!id);
+      try {
+        const ents = isTest
+          ? ((await simGetEntries()) as unknown as { ok: boolean; entries: { id: string }[] })
+          : ((await (await fetchT("/api/entries")).json()) as { ok: boolean; entries: { id: string }[] });
+        if (cancelled) return;
+        if (ents.ok && myIds.length > 0) {
+          const serverIds = new Set(ents.entries.map((e) => e.id));
+          setMineCount(myIds.filter((id) => serverIds.has(id)).length);
+        } else {
+          // 서버 목록을 못 받으면(오프라인 등) 옛 로컬 수치로 폴백(fail-safe: 과다표시 감수).
+          setMineCount(mine.length);
+        }
+      } catch {
+        if (!cancelled) setMineCount(loadMyEntries(mode).length);
+      }
+    }
+    count();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, isTest]);
 
   // 씬 폴링 — 마감(FROZEN 이후)이면 입력 전에 알려준다. 실패 시 폼 유지(fail-open).
   useEffect(() => {

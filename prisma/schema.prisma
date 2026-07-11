@@ -65,6 +65,7 @@ model EventState {
   qrVisible Boolean   @default(true)
   qrSize    String    @default("half") // half | medium | small
   qrCorner  String    @default("center") // center | tr
+  qrPreview Boolean   @default(true) // QR 옆 응모 입력화면 미리보기 표시
   // 추첨 항아리 제어
   corkOpen     Boolean   @default(false) // 코르크(열려야 탈락 시작)
   shakeAt      DateTime? // 흔들기 트리거(갱신 시각)

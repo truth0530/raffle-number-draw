@@ -9,7 +9,7 @@ import JarCanvas, { Entry } from "./JarCanvas";
 import { simGetState, simGetEntries } from "@/lib/simRaffle";
 
 type Winner = { entryId: string; name: string; last4: string; rank: number; batch: number };
-type QrState = { visible: boolean; size: string; corner: string };
+type QrState = { visible: boolean; size: string; corner: string; preview?: boolean };
 type State = {
   ok: boolean;
   scene: string;
@@ -35,6 +35,7 @@ export default function StageView({ mode }: { mode: "live" | "test" }) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [qr, setQr] = useState<string>("");
   const [qrUrl, setQrUrl] = useState<string>("");
+  const [qrFailed, setQrFailed] = useState(false);
   const [plain, setPlain] = useState(false);
   const [shakeSeq, setShakeSeq] = useState(0);
   const [offline, setOffline] = useState(false);
@@ -57,9 +58,15 @@ export default function StageView({ mode }: { mode: "live" | "test" }) {
       url = env && (!isLocalEnv || onLocal) ? env : window.location.origin + "/enter";
     }
     setQrUrl(url);
+    setQrFailed(false);
     QRCode.toDataURL(url, { width: 620, margin: 1, errorCorrectionLevel: "M" })
-      .then(setQr)
-      .catch(() => {});
+      .then((d) => {
+        setQr(d);
+        setQrFailed(false);
+      })
+      // QR 생성 실패가 무음이면 무대에 아무것도 안 떠 관중이 응모 방법을 못 찾는다(사용자 지적 #3).
+      // 최소한 접속 주소를 크게 띄워 수기 입력이라도 가능하게 한다.
+      .catch(() => setQrFailed(true));
   }, [mode]);
 
   // 무대 노트북 절전/화면꺼짐 방지(Wake Lock). 탭이 다시 보이면 재획득.
@@ -138,7 +145,10 @@ export default function StageView({ mode }: { mode: "live" | "test" }) {
 
   const showJar =
     !plain && (scene === "QR" || scene === "COLLECTING" || scene === "FROZEN" || scene === "DRAWING");
-  const showQr = (scene === "QR" || scene === "COLLECTING") && qrState.visible && qr;
+  const qrScene = scene === "QR" || scene === "COLLECTING";
+  const showQr = qrScene && qrState.visible && qr;
+  // QR 이미지 생성이 실패한 경우, 접수 씬에서 주소만이라도 크게 띄운다(무음 방지).
+  const showQrFallback = qrScene && qrState.visible && qrFailed && !qr;
 
   return (
     <main
@@ -171,12 +181,16 @@ export default function StageView({ mode }: { mode: "live" | "test" }) {
         </div>
       )}
 
-      {/* QR 오버레이 — 관리자가 크기/위치/표시 조절.
-          "QR만 크게"(center+half) 안내 화면에서는 QR 우측에 화살표와 응모 입력화면
-          미리보기를 붙여, 스캔하면 무엇이 나오는지 관중이 한눈에 알게 한다. */}
+      {/* QR 오버레이 — 관리자가 크기/위치/표시/미리보기 조절.
+          미리보기(입력폼 목업)는 리모컨 체크박스(qr.preview)로 켜고 끈다(기본 켬).
+          가운데 배치에서만 QR 우측에 가로로 붙는다 — 우측 상단(코너)은 항아리와
+          공존하는 배치라 미리보기를 생략한다(세로 스택은 화면 아래로 잘림 실측). */}
       {showQr && (() => {
-        const sizeVmin = qrState.size === "half" ? 46 : qrState.size === "medium" ? 28 : 16;
-        const withPreview = qrState.corner === "center" && qrState.size === "half";
+        const rawSize = qrState.size === "half" ? 46 : qrState.size === "medium" ? 28 : 16;
+        const column = qrState.corner === "tr";
+        // 코너 배치에서 "크게"(46vmin)는 항아리를 다 덮는다 — 30vmin으로 자동 제한.
+        const sizeVmin = column ? Math.min(rawSize, 30) : rawSize;
+        const withPreview = qrState.preview !== false && qrState.size !== "small" && !column;
         return (
           <div style={qrBoxStyle(qrState)}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "4vmin" }}>
@@ -185,27 +199,40 @@ export default function StageView({ mode }: { mode: "live" | "test" }) {
                 {qrState.size !== "small" && (
                   <div style={{ textAlign: "center", marginTop: 10, fontSize: qrState.size === "half" ? 24 : 16, fontWeight: 700, textShadow: "0 2px 12px #000" }}>
                     {mode === "test" ? "테스트 QR · 같은 컴퓨터의 창만 반영" : "QR을 스캔해 응모하세요"}
-                    {/* QR을 못 찍는 폰을 위한 직접 입력 주소 */}
-                    {mode !== "test" && qrUrl && (
-                      <div style={{ marginTop: 6, fontSize: qrState.size === "half" ? 20 : 13, fontWeight: 600, opacity: 0.75, letterSpacing: 0.5 }}>
-                        또는 주소 입력: <span style={{ color: "#a5b4fc" }}>{qrUrl.replace(/^https?:\/\//, "")}</span>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
               {withPreview && (
                 <>
-                  <div style={{ fontSize: "8vmin", fontWeight: 900, color: "rgba(255,255,255,0.85)", textShadow: "0 2px 16px #000", flexShrink: 0 }}>
+                  <div
+                    style={{
+                      fontSize: "8vmin",
+                      fontWeight: 900,
+                      color: "rgba(255,255,255,0.85)",
+                      textShadow: "0 2px 16px #000",
+                      flexShrink: 0,
+                      lineHeight: 1,
+                    }}
+                  >
                     →
                   </div>
-                  <EnterPreview />
+                  <EnterPreview w={Math.min(27, Math.round(sizeVmin * 0.6) + 10)} />
                 </>
               )}
             </div>
           </div>
         );
       })()}
+
+      {/* QR 생성 실패 폴백 — 주소만이라도 크게 띄워 수기 입력 유도 */}
+      {showQrFallback && (
+        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", textAlign: "center", zIndex: 5, padding: 24 }}>
+          <div style={{ fontSize: 30, fontWeight: 800, marginBottom: 14 }}>휴대폰으로 아래 주소에 접속해 응모하세요</div>
+          <div style={{ fontSize: 40, fontWeight: 900, color: "#a5b4fc", wordBreak: "break-all" }}>
+            {qrUrl.replace(/^https?:\/\//, "")}
+          </div>
+        </div>
+      )}
 
       {scene === "FROZEN" && (
         <Overlay>
@@ -321,13 +348,15 @@ function qrBoxStyle(qr: QrState): React.CSSProperties {
 }
 
 // 응모 입력화면 미리보기 — /enter(EnterView)의 시각 요소를 무대용 정적 목업으로 축소.
-// QR 옆에 "스캔하면 이 화면이 나온다"를 보여주는 용도라 상호작용은 없다.
-function EnterPreview() {
-  const label: React.CSSProperties = { fontSize: "1.7vmin", opacity: 0.85, fontWeight: 600 };
+// QR 옆/아래에 "스캔하면 이 화면이 나온다"를 보여주는 용도라 상호작용은 없다.
+// w(vmin)로 전체 크기를 비례 축소 — 가운데 큰 배치와 우측 상단 좁은 배치를 한 컴포넌트로.
+function EnterPreview({ w = 27 }: { w?: number }) {
+  const v = (n: number) => `${((n * w) / 27).toFixed(2)}vmin`;
+  const label: React.CSSProperties = { fontSize: v(1.7), opacity: 0.85, fontWeight: 600 };
   const input: React.CSSProperties = {
-    padding: "1.6vmin 1.8vmin",
-    fontSize: "2vmin",
-    borderRadius: "1.4vmin",
+    padding: `${v(1.6)} ${v(1.8)}`,
+    fontSize: v(2),
+    borderRadius: v(1.4),
     border: "1px solid #2a2a35",
     background: "#15151d",
     color: "rgba(255,255,255,0.5)",
@@ -335,33 +364,33 @@ function EnterPreview() {
   return (
     <div
       style={{
-        width: "27vmin",
+        width: `${w}vmin`,
         flexShrink: 0,
-        padding: "3.2vmin 2.8vmin",
-        borderRadius: "3.4vmin",
+        padding: `${v(3.2)} ${v(2.8)}`,
+        borderRadius: v(3.4),
         border: "2px solid #34344a",
         background: "#0f0f16",
-        boxShadow: "0 0 5vmin rgba(0,0,0,0.7)",
+        boxShadow: `0 0 ${v(5)} rgba(0,0,0,0.7)`,
         display: "flex",
         flexDirection: "column",
-        gap: "1.4vmin",
+        gap: v(1.4),
       }}
     >
-      <div style={{ textAlign: "center", fontSize: "2.6vmin", fontWeight: 800 }}>추첨 응모</div>
-      <div style={{ textAlign: "center", fontSize: "1.6vmin", opacity: 0.7, marginBottom: "0.6vmin" }}>
+      <div style={{ textAlign: "center", fontSize: v(2.6), fontWeight: 800 }}>추첨 응모</div>
+      <div style={{ textAlign: "center", fontSize: v(1.6), opacity: 0.7, marginBottom: v(0.6) }}>
         이름과 휴대전화 뒤 4자리를 입력하세요.
       </div>
       <div style={label}>이름</div>
       <div style={input}>홍길동</div>
       <div style={label}>휴대전화 뒤 4자리</div>
-      <div style={{ ...input, textAlign: "center", letterSpacing: "1vmin", fontSize: "2.4vmin" }}>0000</div>
+      <div style={{ ...input, textAlign: "center", letterSpacing: v(1), fontSize: v(2.4) }}>0000</div>
       <div
         style={{
-          marginTop: "0.8vmin",
-          padding: "1.7vmin",
-          fontSize: "2.1vmin",
+          marginTop: v(0.8),
+          padding: v(1.7),
+          fontSize: v(2.1),
           fontWeight: 700,
-          borderRadius: "1.6vmin",
+          borderRadius: v(1.6),
           background: "#6d5cff",
           textAlign: "center",
         }}

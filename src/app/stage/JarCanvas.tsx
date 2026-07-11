@@ -468,6 +468,24 @@ export default function JarCanvas({
 
       // 유입: 스폰 지점이 비어 있을 때만(백프레셔) — 겹침 폭발로 밖에 넘치는 것 원천 차단.
       if (scene === "QR" || scene === "COLLECTING") {
+        // 서버에서 사라진 응모(가상 응모 삭제·QR 씬 중 리셋)는 버블도 즉시 제거 —
+        // 유령 버블이 남으면 무대 카운트와 버블 수가 어긋난다(실측 61 vs 32).
+        if (byId.size + pendingRef.current.length > entries.length) {
+          const liveIds = new Set(entries.map((e) => e.id));
+          for (let i = balls.length - 1; i >= 0; i--) {
+            const b = balls[i];
+            if (b.phase === "phys" && !liveIds.has(b.id)) {
+              Matter.Composite.remove(engine.world, b.body);
+              byId.delete(b.id);
+              balls.splice(i, 1);
+            }
+          }
+          pendingRef.current = pendingRef.current.filter((e) => {
+            if (liveIds.has(e.id)) return true;
+            pendingIdsRef.current.delete(e.id);
+            return false;
+          });
+        }
         for (const e of entries) {
           if (!byId.has(e.id) && !pendingIdsRef.current.has(e.id)) {
             pendingIdsRef.current.add(e.id);
