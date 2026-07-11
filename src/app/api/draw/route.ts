@@ -1,4 +1,5 @@
-import { randomInt } from "crypto";
+import { randomInt, randomUUID } from "crypto";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { checkAdmin, unauthorized } from "@/lib/auth";
 import { getState, Scene } from "@/lib/state";
@@ -18,11 +19,15 @@ function shuffle<T>(arr: T[]): T[] {
   return arr;
 }
 
+// 연속 추첨 가드 창: 이 시간 안의 재추첨은 force 없이는 거부한다.
+// 리모컨 새로고침으로 연타 잠금(inFlight)이 풀린 직후의 이중 클릭(20명→40명 사고) 방지.
+const RECENT_DRAW_GUARD_MS = 15_000;
+
 // N명 서버 확정. 이미 당첨된 사람은 제외(추가추첨 중복 차단). 원자적 트랜잭션.
 export async function POST(req: Request) {
   if (!checkAdmin(req)) return unauthorized();
 
-  let body: { count?: unknown };
+  let body: { count?: unknown; force?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -42,62 +47,65 @@ export async function POST(req: Request) {
     );
   }
 
-  const result = await prisma.$transaction(async (tx) => {
-    // 아직 당첨되지 않은 응모자만 후보.
-    const candidates = await tx.entry.findMany({
-      where: { winner: { is: null } },
-      select: { id: true },
+  // 직전 추첨과 너무 가까우면 의도 재확인 요구 — 리모컨이 이 응답을 받아
+  // "정말 추가 추첨인가?" confirm 을 띄우고 force:true 로 재요청한다.
+  if (body.force !== true) {
+    const last = await prisma.draw.findFirst({
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true, batch: true, count: true },
     });
-
-    // 후보 0명이면 추첨 자체를 거부 — 씬만 DRAWING으로 넘어가 무대가 교착되는 것 방지.
-    if (candidates.length === 0) return null;
-
-    const picked = shuffle(candidates.map((c) => c.id)).slice(0, count);
-
-    const lastDraw = await tx.draw.findFirst({ orderBy: { batch: "desc" } });
-    const batch = (lastDraw?.batch ?? 0) + 1;
-    const startRank = await tx.winner.count();
-
-    const draw = await tx.draw.create({
-      data: { batch, count: picked.length },
-    });
-
-    // 왕복 1회로 일괄 삽입 — 원격 Postgres에서 N회 순차 INSERT는
-    // 트랜잭션 타임아웃(P2028)의 온상이라 피한다.
-    await tx.winner.createMany({
-      data: picked.map((entryId, i) => ({
-        drawId: draw.id,
-        entryId,
-        rank: startRank + i + 1,
-      })),
-    });
-
-    // 첫 추첨이면 DRAWING 으로 전이(코르크는 닫힌 상태로 시작).
-    if (state.scene === "FROZEN") {
-      await tx.eventState.update({ where: { id: 1 }, data: { scene: "DRAWING", corkOpen: false } });
+    const elapsed = last ? Date.now() - last.createdAt.getTime() : Infinity;
+    if (last && elapsed < RECENT_DRAW_GUARD_MS) {
+      return Response.json(
+        {
+          ok: false,
+          error: "recent_draw",
+          secondsAgo: Math.max(1, Math.round(elapsed / 1000)),
+          batch: last.batch,
+          count: last.count,
+        },
+        { status: 409 }
+      );
     }
+  }
 
-    const winners = await tx.winner.findMany({
-      where: { drawId: draw.id },
-      include: { entry: true },
-      orderBy: { rank: "asc" },
-    });
-
-    return {
-      batch,
-      requested: count,
-      drawn: picked.length,
-      shortfall: count - picked.length,
-      newWinners: winners.map((w) => ({
-        name: w.entry.name,
-        last4: w.entry.last4,
-        rank: w.rank,
-      })),
-    };
+  // 후보·순번은 트랜잭션 밖에서 읽는다(원자성 불필요 — 아래 unique 제약이 이중당첨을 원천 차단).
+  // 인터랙티브 트랜잭션을 쓰지 않으므로 트랜잭션 풀러(pgbouncer, 6543)에서도 동작한다
+  // — 세션 풀러(5432)의 연결 고갈로 수백 명 동시 접속이 끊기던 문제의 근본 해결.
+  const candidates = await prisma.entry.findMany({
+    where: { winner: { is: null } },
+    select: { id: true, name: true, last4: true },
   });
-
-  if (result === null) {
+  if (candidates.length === 0) {
     return Response.json({ ok: false, error: "no_candidates" }, { status: 409 });
   }
-  return Response.json({ ok: true, ...result });
+
+  const picked = shuffle(candidates.slice()).slice(0, count);
+  const lastDraw = await prisma.draw.findFirst({ orderBy: { batch: "desc" }, select: { batch: true } });
+  const batch = (lastDraw?.batch ?? 0) + 1;
+  const startRank = await prisma.winner.count();
+  const drawId = randomUUID();
+
+  // 원자적 쓰기(배열 트랜잭션 = 단일 BEGIN…COMMIT, 트랜잭션 풀러 호환).
+  // 동시 추첨이 겹치면 Winner.entryId unique(또는 Draw.batch unique) 위반으로 전체 롤백 →
+  // 한 건만 확정되고 나머지는 500(리모컨이 자동 재시도). 기존 당첨자·rank는 절대 안 바뀐다.
+  const ops: Prisma.PrismaPromise<unknown>[] = [
+    prisma.draw.create({ data: { id: drawId, batch, count: picked.length } }),
+    prisma.winner.createMany({
+      data: picked.map((c, i) => ({ drawId, entryId: c.id, rank: startRank + i + 1 })),
+    }),
+  ];
+  if (state.scene === "FROZEN") {
+    ops.push(prisma.eventState.update({ where: { id: 1 }, data: { scene: "DRAWING", corkOpen: false } }));
+  }
+  await prisma.$transaction(ops);
+
+  return Response.json({
+    ok: true,
+    batch,
+    requested: count,
+    drawn: picked.length,
+    shortfall: count - picked.length,
+    newWinners: picked.map((c, i) => ({ name: c.name, last4: c.last4, rank: startRank + i + 1 })),
+  });
 }
