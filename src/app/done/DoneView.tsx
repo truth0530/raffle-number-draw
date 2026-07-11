@@ -9,6 +9,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { simGetState } from "@/lib/simRaffle";
 import { loadMyEntries, clearMyEntries, MyEntry } from "@/lib/myEntries";
+import { colorFor, bubbleFontSize, BUBBLE_FONT_FAMILY, BUBBLE_NAME_COLOR, BUBBLE_COLORS } from "@/lib/bubbleStyle";
 
 type Winner = { entryId: string; name: string; last4: string; rank: number; batch: number };
 type State = { ok: boolean; scene: string; entryCount: number; winners: Winner[] };
@@ -147,7 +148,7 @@ export default function DoneView({ mode }: { mode: "live" | "test" }) {
           무대 화면을 봐주세요! 명단이 공개되면
           <br />이 화면에 <b>내 결과</b>가 바로 표시됩니다.
         </p>
-        <Names mine={mine} />
+        <MyBubbles mine={mine} />
       </Wrap>
     );
   }
@@ -157,7 +158,7 @@ export default function DoneView({ mode }: { mode: "live" | "test" }) {
       <Wrap isTest={isTest}>
         <h1 style={h1}>응모 마감 — 곧 추첨이 시작됩니다</h1>
         <p style={sub}>총 {state?.entryCount ?? 0}명 응모 · 이 화면을 켜두면 결과가 자동 표시됩니다.</p>
-        <Names mine={mine} />
+        <MyBubbles mine={mine} />
       </Wrap>
     );
   }
@@ -166,11 +167,14 @@ export default function DoneView({ mode }: { mode: "live" | "test" }) {
   return (
     <Wrap isTest={isTest}>
       <h1 style={h1}>응모가 완료되었습니다</h1>
-      <p style={sub}>
-        {state ? <>현재 <b style={{ color: "#8f7bff" }}>{state.entryCount}</b>명 응모 중 · </> : null}
-        이 화면을 켜두면 추첨 결과가 자동 표시됩니다.
-      </p>
-      <Names mine={mine} />
+      <div style={waitNotice}>
+        추첨이 끝날 때까지 항아리 속
+        <br />
+        내 이름과 같은 색상의 이름이
+        <br />
+        당첨되는지 비교해 주세요~
+      </div>
+      <MyBubbles mine={mine} />
       <Link href={enterHref} style={{ ...linkBtn, marginTop: 20, fontSize: 14, opacity: 0.75 }}>
         같은 폰으로 가족·일행 응모하기 →
       </Link>
@@ -178,18 +182,91 @@ export default function DoneView({ mode }: { mode: "live" | "test" }) {
   );
 }
 
-function Names({ mine }: { mine: MyEntry[] }) {
+// 무대 항아리의 미니어처 — 병 윤곽은 JarCanvas.drawBottle과 같은 기하(타원 몸통 +
+// 어깨 곡선 + 목), 내 버블은 무대와 같은 색(entryId 해시, bubbleStyle 공유)·같은
+// 이름 표기로 크게, 나머지는 이름 없는 작은 조연 버블로 깔아 내 것만 돋보이게 한다.
+function MyBubbles({ mine }: { mine: MyEntry[] }) {
+  // 병 기하(drawBottle 축소판): 몸통 타원 RX/RY, 목 반폭 mw, 목 길이 neck.
+  const cx = 160;
+  const cy = 240;
+  const RX = 132;
+  const RY = 122;
+  const mw = 34;
+  const neck = 62;
+  const shoulder = RX * 0.3;
+  const gap = Math.asin(shoulder / RX);
+  const yShoulder = cy - RY * Math.cos(gap);
+  const yTop = cy - RY - neck;
+
+  const myColors = new Set(mine.map((e) => (e.entryId ? colorFor(e.entryId) : "")));
+  const decoyPalette = BUBBLE_COLORS.filter((c) => !myColors.has(c));
+  // 조연 버블: 병 바닥에 깔린 더미(이름 없음, 반투명·소형).
+  const decoys = [
+    { x: -74, y: 62, r: 19 },
+    { x: -32, y: 90, r: 15 },
+    { x: 16, y: 84, r: 21 },
+    { x: 66, y: 60, r: 16 },
+    { x: -52, y: 22, r: 13 },
+    { x: 52, y: 96, r: 14 },
+  ];
+  // 내 버블: 1명이면 중앙 크게, 여러 명(가족 응모)이면 서로 겹치지 않는 좌표로.
+  // 4명까지 표시(폰 하나 응모는 최대 8명이지만 5개 이상은 병 안에서 가독성이 죽는다).
+  const layouts: Record<number, { r: number; pos: { x: number; y: number }[] }> = {
+    1: { r: 58, pos: [{ x: 0, y: 0 }] },
+    2: { r: 46, pos: [{ x: -50, y: 22 }, { x: 50, y: -18 }] },
+    3: { r: 38, pos: [{ x: 0, y: -45 }, { x: -55, y: 40 }, { x: 55, y: 40 }] },
+    4: { r: 32, pos: [{ x: 0, y: -52 }, { x: -56, y: 34 }, { x: 56, y: 34 }, { x: 0, y: 84 }] },
+  };
+  const { r: myR, pos: myPos } = layouts[Math.min(Math.max(mine.length, 1), 4)];
+
   return (
-    <div style={{ marginTop: 16, display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
-      {mine.map((e) => (
-        <span
-          key={`${e.name}-${e.last4}`}
-          style={{ padding: "6px 14px", borderRadius: 999, background: "#1c1c28", border: "1px solid #2c2c3a", fontSize: 14.5, fontWeight: 700 }}
-        >
-          {e.name} <span style={{ opacity: 0.45, fontSize: 12.5 }}>{e.last4}</span>
-        </span>
+    <svg width={300} height={394} viewBox="0 0 320 420" style={{ marginTop: 14 }} role="img" aria-label="항아리 속 내 버블">
+      {/* 병 몸통: 어깨 틈을 남긴 타원 호 */}
+      <path
+        d={`M ${cx + shoulder} ${yShoulder} A ${RX} ${RY} 0 1 1 ${cx - shoulder} ${yShoulder}`}
+        fill="none"
+        stroke="rgba(160,170,210,0.28)"
+        strokeWidth={3}
+      />
+      {/* 어깨 곡선 + 목 */}
+      <path
+        d={`M ${cx - shoulder} ${yShoulder} Q ${cx - mw * 2.6} ${cy - RY * 0.98} ${cx - mw} ${cy - RY - neck * 0.45} L ${cx - mw} ${yTop} L ${cx + mw} ${yTop} L ${cx + mw} ${cy - RY - neck * 0.45} Q ${cx + mw * 2.6} ${cy - RY * 0.98} ${cx + shoulder} ${yShoulder}`}
+        fill="none"
+        stroke="rgba(160,170,210,0.28)"
+        strokeWidth={3}
+      />
+      {decoys.map((d, i) => (
+        <circle
+          key={i}
+          cx={cx + d.x}
+          cy={cy + d.y}
+          r={d.r}
+          fill={decoyPalette[i % decoyPalette.length]}
+          opacity={0.4}
+        />
       ))}
-    </div>
+      {mine.slice(0, myPos.length).map((e, i) => {
+        const bx = cx + myPos[i].x;
+        const by = cy + myPos[i].y;
+        return (
+          <g key={`${e.name}-${e.last4}`}>
+            <circle cx={bx} cy={by} r={myR} fill={e.entryId ? colorFor(e.entryId) : "#2c2c38"} />
+            <text
+              x={bx}
+              y={by}
+              textAnchor="middle"
+              dominantBaseline="central"
+              fill={BUBBLE_NAME_COLOR}
+              fontFamily={BUBBLE_FONT_FAMILY}
+              fontWeight={700}
+              fontSize={bubbleFontSize(myR, e.name)}
+            >
+              {e.name}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
   );
 }
 
@@ -217,6 +294,16 @@ function Wrap({ isTest, children }: { isTest: boolean; children: React.ReactNode
 }
 
 const h1: React.CSSProperties = { fontSize: 25, fontWeight: 800, marginTop: 14, lineHeight: 1.35 };
+const waitNotice: React.CSSProperties = {
+  marginTop: 16,
+  padding: "13px 20px",
+  borderRadius: 12,
+  background: "rgba(255,210,74,0.1)",
+  border: "1px solid rgba(255,210,74,0.55)",
+  color: "#ffd24a",
+  fontWeight: 800,
+  fontSize: 16.5,
+};
 const sub: React.CSSProperties = { opacity: 0.7, marginTop: 12, fontSize: 15.5, lineHeight: 1.65 };
 const linkBtn: React.CSSProperties = {
   marginTop: 22,

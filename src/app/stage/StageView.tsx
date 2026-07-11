@@ -171,23 +171,41 @@ export default function StageView({ mode }: { mode: "live" | "test" }) {
         </div>
       )}
 
-      {/* QR 오버레이 — 관리자가 크기/위치/표시 조절 */}
-      {showQr && (
-        <div style={qrBoxStyle(qrState)}>
-          <img src={qr} alt="응모 QR" title={qrUrl} style={{ width: "100%", height: "100%", borderRadius: 16, background: "#fff", padding: "4%" }} />
-          {qrState.size !== "small" && (
-            <div style={{ textAlign: "center", marginTop: 10, fontSize: qrState.size === "half" ? 24 : 16, fontWeight: 700, textShadow: "0 2px 12px #000" }}>
-              {mode === "test" ? "테스트 QR · 같은 컴퓨터의 창만 반영" : "QR을 스캔해 응모하세요"}
-              {/* QR을 못 찍는 폰을 위한 직접 입력 주소 */}
-              {mode !== "test" && qrUrl && (
-                <div style={{ marginTop: 6, fontSize: qrState.size === "half" ? 20 : 13, fontWeight: 600, opacity: 0.75, letterSpacing: 0.5 }}>
-                  또는 주소 입력: <span style={{ color: "#a5b4fc" }}>{qrUrl.replace(/^https?:\/\//, "")}</span>
-                </div>
+      {/* QR 오버레이 — 관리자가 크기/위치/표시 조절.
+          "QR만 크게"(center+half) 안내 화면에서는 QR 우측에 화살표와 응모 입력화면
+          미리보기를 붙여, 스캔하면 무엇이 나오는지 관중이 한눈에 알게 한다. */}
+      {showQr && (() => {
+        const sizeVmin = qrState.size === "half" ? 46 : qrState.size === "medium" ? 28 : 16;
+        const withPreview = qrState.corner === "center" && qrState.size === "half";
+        return (
+          <div style={qrBoxStyle(qrState)}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "4vmin" }}>
+              <div style={{ width: `${sizeVmin}vmin`, flexShrink: 0 }}>
+                <img src={qr} alt="응모 QR" title={qrUrl} style={{ width: "100%", borderRadius: 16, background: "#fff", padding: "4%", display: "block" }} />
+                {qrState.size !== "small" && (
+                  <div style={{ textAlign: "center", marginTop: 10, fontSize: qrState.size === "half" ? 24 : 16, fontWeight: 700, textShadow: "0 2px 12px #000" }}>
+                    {mode === "test" ? "테스트 QR · 같은 컴퓨터의 창만 반영" : "QR을 스캔해 응모하세요"}
+                    {/* QR을 못 찍는 폰을 위한 직접 입력 주소 */}
+                    {mode !== "test" && qrUrl && (
+                      <div style={{ marginTop: 6, fontSize: qrState.size === "half" ? 20 : 13, fontWeight: 600, opacity: 0.75, letterSpacing: 0.5 }}>
+                        또는 주소 입력: <span style={{ color: "#a5b4fc" }}>{qrUrl.replace(/^https?:\/\//, "")}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              {withPreview && (
+                <>
+                  <div style={{ fontSize: "8vmin", fontWeight: 900, color: "rgba(255,255,255,0.85)", textShadow: "0 2px 16px #000", flexShrink: 0 }}>
+                    →
+                  </div>
+                  <EnterPreview />
+                </>
               )}
             </div>
-          )}
-        </div>
-      )}
+          </div>
+        );
+      })()}
 
       {scene === "FROZEN" && (
         <Overlay>
@@ -289,12 +307,10 @@ export default function StageView({ mode }: { mode: "live" | "test" }) {
   );
 }
 
-// QR 박스 크기/위치 계산
+// QR 박스 위치 계산 — 너비는 내부 QR 칼럼이 스스로 정한다(미리보기 동반 시 행이 넓어짐).
 function qrBoxStyle(qr: QrState): React.CSSProperties {
-  const sizeVmin = qr.size === "half" ? 46 : qr.size === "medium" ? 28 : 16;
   const base: React.CSSProperties = {
     position: "absolute",
-    width: `${sizeVmin}vmin`,
     zIndex: 5,
     transition: "all .6s cubic-bezier(.2,.8,.2,1)",
   };
@@ -302,6 +318,58 @@ function qrBoxStyle(qr: QrState): React.CSSProperties {
   // 우측 상단 또는 가운데만.
   if (qr.corner === "tr") return { ...base, top: m, right: m };
   return { ...base, top: "50%", left: "50%", transform: "translate(-50%,-50%)" };
+}
+
+// 응모 입력화면 미리보기 — /enter(EnterView)의 시각 요소를 무대용 정적 목업으로 축소.
+// QR 옆에 "스캔하면 이 화면이 나온다"를 보여주는 용도라 상호작용은 없다.
+function EnterPreview() {
+  const label: React.CSSProperties = { fontSize: "1.7vmin", opacity: 0.85, fontWeight: 600 };
+  const input: React.CSSProperties = {
+    padding: "1.6vmin 1.8vmin",
+    fontSize: "2vmin",
+    borderRadius: "1.4vmin",
+    border: "1px solid #2a2a35",
+    background: "#15151d",
+    color: "rgba(255,255,255,0.5)",
+  };
+  return (
+    <div
+      style={{
+        width: "27vmin",
+        flexShrink: 0,
+        padding: "3.2vmin 2.8vmin",
+        borderRadius: "3.4vmin",
+        border: "2px solid #34344a",
+        background: "#0f0f16",
+        boxShadow: "0 0 5vmin rgba(0,0,0,0.7)",
+        display: "flex",
+        flexDirection: "column",
+        gap: "1.4vmin",
+      }}
+    >
+      <div style={{ textAlign: "center", fontSize: "2.6vmin", fontWeight: 800 }}>추첨 응모</div>
+      <div style={{ textAlign: "center", fontSize: "1.6vmin", opacity: 0.7, marginBottom: "0.6vmin" }}>
+        이름과 휴대전화 뒤 4자리를 입력하세요.
+      </div>
+      <div style={label}>이름</div>
+      <div style={input}>홍길동</div>
+      <div style={label}>휴대전화 뒤 4자리</div>
+      <div style={{ ...input, textAlign: "center", letterSpacing: "1vmin", fontSize: "2.4vmin" }}>0000</div>
+      <div
+        style={{
+          marginTop: "0.8vmin",
+          padding: "1.7vmin",
+          fontSize: "2.1vmin",
+          fontWeight: 700,
+          borderRadius: "1.6vmin",
+          background: "#6d5cff",
+          textAlign: "center",
+        }}
+      >
+        응모하기
+      </div>
+    </div>
+  );
 }
 
 function Center({ children }: { children: React.ReactNode }) {

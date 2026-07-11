@@ -2,6 +2,7 @@
 
 import Matter from "matter-js";
 import { useEffect, useRef } from "react";
+import { colorFor, hash01, BUBBLE_FONT_FAMILY, BUBBLE_NAME_COLOR, bubbleFontSize } from "@/lib/bubbleStyle";
 
 export type Entry = { id: string; name: string };
 
@@ -44,7 +45,6 @@ type JarGeom = {
   neckLen: number;
 };
 
-const COLORS = ["#6d5cff", "#4f8cff", "#38bdf8", "#a78bfa", "#f472b6", "#34d399", "#fb923c"];
 const GOLD = "#ffd24a";
 // 부분 기울기: 완전 180° 금지(생존 버블이 기운 벽에 얹히는 현실감).
 // 0.78π(≈140°)면 주둥이가 병의 최저 영역이 되어 중력만으로 흐름이 주둥이로 모인다.
@@ -58,15 +58,6 @@ const EXIT_MS = 320; // 넥 통과 스크립트 시간
 const BALL_CATEGORY = 0x0001;
 const WALL_CATEGORY = 0x0002;
 const BALL_MASK = BALL_CATEGORY | WALL_CATEGORY;
-
-function hash01(s: string) {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return ((h >>> 0) % 100000) / 100000;
-}
 
 function easeInOut(t: number) {
   return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
@@ -188,10 +179,6 @@ export default function JarCanvas({
       const g = liveGeom();
       const r = Math.sqrt((g.RX * g.RY * 0.6) / Math.max(1, count));
       return Math.max(Math.min(W, H) * 0.01, Math.min(Math.min(g.RX, g.RY) * 0.42, r));
-    }
-
-    function colorFor(id: string) {
-      return COLORS[Math.floor(hash01(id + "c") * COLORS.length) % COLORS.length];
     }
 
     function localOf(g: JarGeom, x: number, y: number) {
@@ -958,10 +945,9 @@ export default function JarCanvas({
         }
 
         // 이름은 항상 표기: 버블 지름에 여백 최소로 우겨넣는다(초대형 스크린 전제).
-        const chars = Math.max(2, b.name.length);
-        const fs = Math.max(4, Math.min(b.r * 1.05, (b.r * 2 * 0.94) / (chars * 0.92)));
-        ctx.fillStyle = "rgba(255,255,255,0.96)";
-        ctx.font = `700 ${fs.toFixed(1)}px -apple-system, "Noto Sans KR", sans-serif`;
+        const fs = bubbleFontSize(b.r, b.name);
+        ctx.fillStyle = BUBBLE_NAME_COLOR;
+        ctx.font = `700 ${fs.toFixed(1)}px ${BUBBLE_FONT_FAMILY}`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillText(b.name, px, py);
