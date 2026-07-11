@@ -8,6 +8,8 @@ import {
   loadState,
   saveState,
   subscribe,
+  subscribePresence,
+  sendPresence,
   actConfig,
   actDraw,
   actReveal,
@@ -42,6 +44,39 @@ export default function NumbersAdmin() {
   const [confirmBox, setConfirmBox] = useState<{ msg: string; onOk: () => void } | null>(null);
   const [alertBox, setAlertBox] = useState<string | null>(null);
   const askConfirm = useCallback((msg: string, onOk: () => void) => setConfirmBox({ msg, onOk }), []);
+  // 슬라이드쇼(무대) 창 상태 — 하트비트로 열림 여부 감지(관리자 새로고침 후에도 정확).
+  const [showOpen, setShowOpen] = useState(false);
+  const [previewOn, setPreviewOn] = useState(true);
+  const showWinRef = useRef<Window | null>(null);
+  const lastAliveRef = useRef(0);
+
+  useEffect(() => {
+    const unsub = subscribePresence((m) => {
+      if (m.type === "show-alive") {
+        lastAliveRef.current = Date.now();
+        setShowOpen(true);
+      } else if (m.type === "show-bye") {
+        lastAliveRef.current = 0;
+        setShowOpen(false);
+      }
+    });
+    // 열림 판정 이중화:
+    // (1) 내가 연 창 참조(showWinRef) — 새로고침 전이면 백그라운드 탭 타이머 스로틀링과
+    //     무관하게 즉시·확실. closed 가 되면 닫힘.
+    // (2) 하트비트(lastAlive) — 관리자 새로고침으로 참조가 사라진 뒤의 폴백.
+    // 둘 중 하나라도 살아있으면 열림.
+    const tick = setInterval(() => {
+      const refAlive = !!showWinRef.current && !showWinRef.current.closed;
+      if (!refAlive) showWinRef.current = null;
+      const beatAlive = !!lastAliveRef.current && Date.now() - lastAliveRef.current <= 4000;
+      if (!beatAlive) lastAliveRef.current = 0;
+      setShowOpen(refAlive || beatAlive);
+    }, 1000);
+    return () => {
+      unsub();
+      clearInterval(tick);
+    };
+  }, []);
 
   useEffect(() => {
     const s = loadState();
@@ -84,6 +119,18 @@ export default function NumbersAdmin() {
   }, [askConfirm, beginDraw]);
 
   function openShow() {
+    // 이미 열려 있으면(하트비트 감지) 새 창을 열지 않는다 — 이중 창 방지.
+    // 이 관리자가 연 창 참조가 있으면 앞으로 가져오고, (관리자 새로고침 등으로) 참조가
+    // 없으면 프레즌스 채널로 focus 요청을 보내 그 창이 스스로 앞으로 나온다.
+    if (showOpen) {
+      if (showWinRef.current && !showWinRef.current.closed) {
+        showWinRef.current.focus();
+      } else {
+        sendPresence({ type: "focus-show" });
+        setAlertBox("슬라이드쇼 창은 이미 열려 있습니다. (아래 미리보기로 상태를 확인하세요)");
+      }
+      return;
+    }
     const w = window.open(
       "/numbers/show",
       "raffle_show",
@@ -91,6 +138,7 @@ export default function NumbersAdmin() {
     );
     // 팝업 차단 시 무반응으로 끝나지 않게(네이티브 alert 은 전체화면을 깨므로 페이지 모달로).
     if (!w) setAlertBox("팝업이 차단되었습니다. 브라우저 팝업을 허용하거나 주소창에 /numbers/show 를 직접 입력하세요.");
+    else showWinRef.current = w;
   }
 
   const numbers = state.numbers;
@@ -109,8 +157,11 @@ export default function NumbersAdmin() {
           <span>없음 <b style={{ color: C.absent }}>{absent.length}</b></span>
           <span>대기 <b style={{ color: C.pending }}>{pending}</b></span>
         </div>
-        <button style={{ ...uiBtn("sky", { size: "sm" }), width: "auto", whiteSpace: "nowrap" }} onClick={openShow}>
-          슬라이드쇼 창 열기
+        <button
+          style={{ ...uiBtn(showOpen ? "green" : "sky", { size: "sm" }), width: "auto", whiteSpace: "nowrap" }}
+          onClick={openShow}
+        >
+          {showOpen ? "슬라이드쇼 열림 · 앞으로" : "슬라이드쇼 창 열기"}
         </button>
         <button
           style={{ ...ghostDanger, width: "auto", padding: "9px 12px", fontSize: 13.5, whiteSpace: "nowrap" }}
@@ -203,6 +254,55 @@ export default function NumbersAdmin() {
           </div>
         </div>
       )}
+
+      {/* 발표자 모드 미리보기 — 청중이 보는 슬라이드쇼 화면을 관리자 화면에 그대로 축소 표시.
+          /numbers/show?preview=1 을 iframe 으로 띄워 같은 상태(localStorage)를 실시간 미러링.
+          preview 모드라 하트비트를 안 보내 "쇼 열림" 오판을 만들지 않는다. */}
+      <div style={pipWrap}>
+        <div style={pipHeader}>
+          <span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700 }}>
+            <span
+              style={{
+                width: 9,
+                height: 9,
+                borderRadius: "50%",
+                background: showOpen ? "#22c55e" : "#6b7280",
+                boxShadow: showOpen ? "0 0 6px #22c55e" : "none",
+              }}
+            />
+            청중 화면 {showOpen ? "· 무대 열림" : "· 무대 창 닫힘"}
+          </span>
+          <button
+            onClick={() => setPreviewOn((v) => !v)}
+            style={{ padding: "3px 9px", fontSize: 12, fontWeight: 700, borderRadius: 7, border: "1px solid #2e2e3a", background: "#20202a", color: "#e4e4ec", cursor: "pointer" }}
+          >
+            {previewOn ? "접기" : "펼치기"}
+          </button>
+        </div>
+        {previewOn && (
+          <div style={{ width: PREVIEW_W, height: PREVIEW_W * (720 / 1280), overflow: "hidden", position: "relative", background: "#0a0a0f" }}>
+            <iframe
+              src="/numbers/show?preview=1"
+              title="청중 화면 미리보기"
+              style={{
+                width: 1280,
+                height: 720,
+                border: 0,
+                transform: `scale(${PREVIEW_W / 1280})`,
+                transformOrigin: "top left",
+                pointerEvents: "none",
+              }}
+            />
+            {!showOpen && (
+              <div style={pipClosedOverlay}>
+                무대 창이 닫혀 있습니다
+                <br />
+                <span style={{ opacity: 0.7, fontWeight: 600, fontSize: 11.5 }}>위 “슬라이드쇼 창 열기”를 누르세요</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* 페이지 내 확인 모달 — 네이티브 confirm 대체(전체화면 유지) */}
       {confirmBox && (
@@ -317,6 +417,44 @@ const trayChip: React.CSSProperties = {
   color: "#fda4af",
   border: "1px solid rgba(244,63,94,0.4)",
   cursor: "pointer",
+};
+// 발표자 미리보기(PiP) — 화면 우하단 고정. 번호 그리드를 가리면 "접기"로 숨긴다.
+const PREVIEW_W = 480;
+const pipWrap: React.CSSProperties = {
+  position: "fixed",
+  right: 16,
+  bottom: 16,
+  zIndex: 40,
+  width: PREVIEW_W,
+  maxWidth: "calc(100vw - 32px)",
+  borderRadius: 12,
+  overflow: "hidden",
+  border: "1px solid #2e2e3a",
+  background: "#15151d",
+  boxShadow: "0 12px 34px rgba(0,0,0,0.55)",
+};
+const pipHeader: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  padding: "7px 10px",
+  background: "#1b1b25",
+  color: "#e4e4ec",
+};
+const pipClosedOverlay: React.CSSProperties = {
+  position: "absolute",
+  inset: 0,
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  justifyContent: "center",
+  textAlign: "center",
+  gap: 4,
+  background: "rgba(10,10,15,0.78)",
+  color: "#c9c2ff",
+  fontSize: 13,
+  fontWeight: 700,
+  lineHeight: 1.5,
 };
 const modalBackdrop: React.CSSProperties = {
   position: "fixed",

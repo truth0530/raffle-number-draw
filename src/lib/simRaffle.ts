@@ -44,6 +44,7 @@ type SimDB = {
   winners: SimWinner[];
   collisions: number;
   lastBatch: number;
+  lastDrawAt: string | null;
 };
 
 const KEY = "simRaffle:v1";
@@ -65,6 +66,7 @@ function defaultDB(): SimDB {
     winners: [],
     collisions: 0,
     lastBatch: 0,
+    lastDrawAt: null,
   };
 }
 
@@ -191,6 +193,16 @@ export async function simPost(path: string, body: Json): Promise<Res> {
     const count = Math.floor(Number(body.count));
     if (!Number.isFinite(count) || count < 1 || count > 1000) return err(422, "invalid_count");
     if (!["FROZEN", "DRAWING", "WINNERS"].includes(db.scene)) return err(409, "not_ready", { scene: db.scene });
+    // 실서버(/api/draw)와 동일한 연속 추첨 가드 — 15초 내 재추첨은 force 필요.
+    // (기존 저장분에는 lastDrawAt이 없을 수 있어 ?? null 로 흡수)
+    const lastAt = db.lastDrawAt ?? null;
+    if (body.force !== true && lastAt && Date.now() - Date.parse(lastAt) < 15_000) {
+      return err(409, "recent_draw", {
+        secondsAgo: Math.max(1, Math.round((Date.now() - Date.parse(lastAt)) / 1000)),
+        batch: db.lastBatch,
+        count: db.winners.filter((w) => w.batch === db.lastBatch).length,
+      });
+    }
     const wonIds = new Set(db.winners.map((w) => w.entryId));
     const candidates = db.entries.filter((e) => !wonIds.has(e.id)).map((e) => e.id);
     if (candidates.length === 0) return err(409, "no_candidates");
@@ -198,6 +210,7 @@ export async function simPost(path: string, body: Json): Promise<Res> {
     const batch = db.lastBatch + 1;
     const startRank = db.winners.length;
     db.lastBatch = batch;
+    db.lastDrawAt = new Date().toISOString();
     picked.forEach((entryId, i) => db.winners.push({ entryId, rank: startRank + i + 1, batch }));
     if (db.scene === "FROZEN") {
       db.scene = "DRAWING";

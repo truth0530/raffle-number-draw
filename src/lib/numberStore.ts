@@ -11,7 +11,15 @@ export type NState = {
   drawing: boolean;
   numbers: NumItem[];
   removed: number[];
+  // 추첨 시작 전 "대기/안내 슬라이드"의 현재 페이지(0-기반). 관리자의 이전/다음이 바꾸고,
+  // 슬라이드쇼 화면이 이 값을 읽어 어떤 안내 페이지를 그릴지 결정한다(다른 세션이 렌더 담당).
+  // drawing/결과 단계에서는 무시된다(슬라이드는 대기 상태 전용).
+  slide: number;
 };
+
+// 대기/안내 슬라이드 총 개수. 안내 이미지 페이지를 추가하면 이 값을 늘린다(관리자 이전/다음 범위).
+// 현재: [0]=안내 페이지, [1]=추첨을 기다리는 중.
+export const SLIDE_COUNT = 2;
 
 export const defaultState: NState = {
   rangeMax: 400,
@@ -20,6 +28,7 @@ export const defaultState: NState = {
   drawing: false,
   numbers: [],
   removed: [],
+  slide: 0,
 };
 
 const KEY = "numberDraw:v1";
@@ -44,10 +53,16 @@ export function loadState(): NState {
           }))
         : [],
       removed: Array.isArray(s.removed) ? s.removed : [],
+      slide: clampSlide(Number(s.slide) || 0),
     };
   } catch {
     return { ...defaultState };
   }
+}
+
+function clampSlide(i: number): number {
+  if (!Number.isFinite(i)) return 0;
+  return Math.max(0, Math.min(SLIDE_COUNT - 1, Math.floor(i)));
 }
 
 let channel: BroadcastChannel | null = null;
@@ -81,6 +96,32 @@ export function subscribe(cb: (s: NState) => void): () => void {
     ch?.removeEventListener("message", onMsg);
     window.removeEventListener("storage", onStorage);
   };
+}
+
+// ---- 프레즌스(창 상태) 채널 ----
+// 슬라이드쇼 창의 생존 여부를 관리자에게 알린다(하트비트). 상태 동기화 채널과 분리해,
+// 하트비트마다 상태 리로드가 일어나지 않게 한다. 관리자↔쇼 관계만 쓰는 소형 채널.
+export type PresenceMsg =
+  | { type: "show-alive" }
+  | { type: "show-bye" }
+  | { type: "focus-show" };
+
+const PRES = "numberDrawPresence";
+let presCh: BroadcastChannel | null = null;
+function getPresence(): BroadcastChannel | null {
+  if (typeof window === "undefined") return null;
+  if (!presCh && "BroadcastChannel" in window) presCh = new BroadcastChannel(PRES);
+  return presCh;
+}
+export function sendPresence(msg: PresenceMsg): void {
+  getPresence()?.postMessage(msg);
+}
+export function subscribePresence(cb: (msg: PresenceMsg) => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const ch = getPresence();
+  const h = (e: MessageEvent) => cb(e.data as PresenceMsg);
+  ch?.addEventListener("message", h);
+  return () => ch?.removeEventListener("message", h);
 }
 
 // ---- 순수 로직 ----

@@ -139,9 +139,23 @@ async function main() {
     JSON.stringify(s.json?.winners?.[0])
   );
 
-  // 9) 추가 추첨 3명 → 총 23명, 기존과 미중복
-  const d2 = await api("/api/draw", { method: "POST", body: { count: 3 }, token: TOKEN });
-  check("추가추첨 3명 성공", d2.json?.ok === true && d2.json?.drawn === 3, JSON.stringify(d2.json?.drawn));
+  // 8.5) 연속 추첨 가드: 직전 추첨 15초 내 force 없는 재추첨은 거부
+  // (리모컨 새로고침으로 연타 잠금이 풀린 뒤의 이중 클릭 사고 방지)
+  const dGuard = await api("/api/draw", { method: "POST", body: { count: 3 }, token: TOKEN });
+  check(
+    "직전 추첨 15초 내 재추첨 거부 409(recent_draw)",
+    dGuard.status === 409 && dGuard.json?.error === "recent_draw",
+    `${dGuard.status} ${dGuard.json?.error}`
+  );
+  check(
+    "recent_draw 응답에 직전 배치 정보 포함",
+    Number(dGuard.json?.secondsAgo) >= 1 && Number(dGuard.json?.batch) >= 1 && Number(dGuard.json?.count) === 20,
+    JSON.stringify({ secondsAgo: dGuard.json?.secondsAgo, batch: dGuard.json?.batch, count: dGuard.json?.count })
+  );
+
+  // 9) 추가 추첨 3명(force = 리모컨 확인 대화상자 통과) → 총 23명, 기존과 미중복
+  const d2 = await api("/api/draw", { method: "POST", body: { count: 3, force: true }, token: TOKEN });
+  check("추가추첨 3명 성공(force)", d2.json?.ok === true && d2.json?.drawn === 3, JSON.stringify(d2.json?.drawn));
 
   s = await api("/api/state");
   const all = s.json?.winners ?? [];
