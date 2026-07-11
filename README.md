@@ -67,7 +67,10 @@ npm run dev            # http://localhost:3000
 npm run gate           # e2e 검증 게이트(dev 서버 실행 후) — 응모→마감→추첨→리셋 전체
 ```
 - 스택: Next.js 16 + React 19 + TypeScript + Prisma + Supabase Postgres + matter-js.
-- 배포: Vercel (GitHub 푸시 → 자동 배포). `DATABASE_URL` 은 **세션 풀러(5432)** 사용
-  — 트랜잭션 풀러(6543)는 Prisma 인터랙티브 트랜잭션을 끊는다(P2028 실측).
+- 배포: Vercel (GitHub 푸시 → 자동 배포). 운영 `DATABASE_URL` 은 **트랜잭션 풀러(6543,
+  `pgbouncer=true`)** 사용 — 서버리스에서 연결이 즉시 반납돼 수백 명 동시 접속을 감당한다.
+  세션 풀러(5432)는 연결을 붙잡아 소수 요청만으로 고갈된다(실측 장애). 6543은 Prisma
+  인터랙티브 트랜잭션을 끊으므로(P2028), 추첨 라우트는 배열 트랜잭션만 쓴다
+  (`src/app/api/draw/route.ts`). `DIRECT_URL`(마이그레이션 전용)은 5432를 쓴다.
 - 주의: 로컬 개발과 프로덕션이 같은 Supabase DB를 공유하므로, 행사 직전 관리자에서
   **전체 리셋**을 한 번 누르고 시작할 것. `npm run gate` 도 데이터를 리셋한다.

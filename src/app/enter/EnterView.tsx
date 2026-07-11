@@ -101,26 +101,39 @@ export default function EnterView({ mode }: { mode: "live" | "test" }) {
 
     setBusy(true);
     try {
-      let status: number;
-      let data: { ok?: boolean; error?: string; duplicate?: boolean; entryId?: string | null };
-      if (isTest) {
-        // 테스트 샌드박스: 같은 컴퓨터의 무대/리모컨 창과 로컬로 동기화.
-        const r = await simPost("/api/enter", { name: cleanName, last4: cleanLast4 });
-        status = r.status;
-        data = r.data as typeof data;
-      } else {
-        // 현장 wifi에서 요청이 pending으로 매달리면 "전송 중…"에 영구 고착된다 — 10초 타임아웃.
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 10000);
-        const res = await fetch("/api/enter", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: cleanName, last4: cleanLast4 }),
-          signal: ctrl.signal,
-        }).finally(() => clearTimeout(timer));
-        status = res.status;
-        data = await res.json();
+      let status = 0;
+      let data: { ok?: boolean; error?: string; duplicate?: boolean; entryId?: string | null } = {};
+      // 수백 명이 동시에 몰리면 순간적인 서버/DB 블립이 날 수 있다 — 5xx·네트워크 오류는
+      // 최대 3회 자동 재시도해 관중이 직접 여러 번 누르지 않아도 응모가 들어가게 한다.
+      // 같은 이름+뒤4자리는 서버가 멱등 처리(중복=성공)하므로 재시도해도 이중 응모가 아니다.
+      let networkErr = false;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          if (isTest) {
+            const r = await simPost("/api/enter", { name: cleanName, last4: cleanLast4 });
+            status = r.status;
+            data = r.data as typeof data;
+          } else {
+            // 현장 wifi에서 요청이 pending으로 매달리면 "전송 중…"에 영구 고착된다 — 10초 타임아웃.
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 10000);
+            const res = await fetch("/api/enter", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name: cleanName, last4: cleanLast4 }),
+              signal: ctrl.signal,
+            }).finally(() => clearTimeout(timer));
+            status = res.status;
+            data = await res.json();
+          }
+          networkErr = false;
+          if (status < 500) break; // 성공 또는 4xx(마감·형식오류 등) → 재시도 불필요
+        } catch {
+          networkErr = true; // 타임아웃/네트워크 → 재시도
+        }
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
       }
+      if (networkErr) throw new Error("network");
       if (status === 200 && data.ok) {
         // 이 폰의 응모 내역으로 저장 → /done에서 내 결과 실시간 확인.
         // duplicate(이미 같은 이름+뒤4자리 존재)도 같은 응모로 간주해 결과 화면으로.

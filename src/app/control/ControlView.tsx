@@ -30,6 +30,7 @@ const ERROR_LABEL: Record<string, string> = {
   live_locked: "추첨 진행 중에는 잠겨 있습니다",
   closed: "응모가 닫힌 상태입니다",
   invalid_count: "인원 수를 확인하세요",
+  recent_draw: "직전 추첨과 간격이 짧습니다 — 확인 창에서 진행 여부를 선택하세요",
 };
 
 // 타임아웃 있는 fetch: 응답이 끊긴 채 pending으로 남으면 폴링 루프가 영구 정지한다(실측).
@@ -119,33 +120,47 @@ export default function ControlView({ mode }: { mode: "live" | "test" }) {
       }
       inFlight.current = true;
       try {
-        let status: number;
-        let data: Record<string, unknown>;
-        if (isTest) {
-          // 테스트 샌드박스: 같은 경로 문자열을 브라우저 로컬 엔진으로 라우팅.
-          const r = await simPost(path, body as Record<string, unknown>);
-          status = r.status;
-          data = r.data;
-        } else {
-          // 타임아웃 없으면 요청이 pending으로 매달릴 때 리모컨이 조작 불능이 된다.
-          const ctrl = new AbortController();
-          const timer = setTimeout(() => ctrl.abort(), 8000);
-          const res = await fetch(path, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "x-admin-token": savedToken },
-            body: JSON.stringify(body),
-            signal: ctrl.signal,
-          }).finally(() => clearTimeout(timer));
-          status = res.status;
-          data = await res.json();
+        // 일시적 서버/DB 오류(5xx·네트워크)는 최대 3회 자동 재시도한다. 트랜잭션 풀러
+        // 전환으로 대부분 사라졌지만, 순간 블립에도 관리자 조작(추첨·리셋·전이)이 한 번에
+        // 반영되게 한다. 4xx(토큰 오류·recent_draw·불법 전이 등)는 의도된 응답이라 재시도 안 함.
+        // 추첨 재시도의 이중 실행 위험은 서버의 recent_draw 가드(15초)가 막는다.
+        let status = 0;
+        let data: Record<string, unknown> | null = null;
+        let lastErr = false;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            if (isTest) {
+              const r = await simPost(path, body as Record<string, unknown>);
+              status = r.status;
+              data = r.data;
+            } else {
+              const ctrl = new AbortController();
+              const timer = setTimeout(() => ctrl.abort(), 8000);
+              const res = await fetch(path, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "x-admin-token": savedToken },
+                body: JSON.stringify(body),
+                signal: ctrl.signal,
+              }).finally(() => clearTimeout(timer));
+              status = res.status;
+              data = await res.json();
+            }
+            lastErr = false;
+            if (status < 500) break; // 성공 또는 4xx(의도된 실패) → 재시도 불필요
+          } catch {
+            lastErr = true; // 네트워크/타임아웃 → 재시도
+          }
+          if (attempt < 2) await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+        }
+        if (lastErr || !data) {
+          setMsg("네트워크 오류 — 반영 여부를 위 상태에서 확인 후 다시 시도하세요.");
+          return null;
         }
         if (status === 401) setMsg("토큰이 틀렸습니다.");
+        else if (status >= 500) setMsg("서버 오류가 반복됩니다 — 잠시 후 다시 시도하세요.");
         else if (!data.ok) setMsg(`실패: ${ERROR_LABEL[String(data.error)] ?? data.error ?? status}`);
         else setMsg("완료");
         return data;
-      } catch {
-        setMsg("네트워크 오류 — 반영 여부를 위 상태에서 확인 후 다시 시도하세요.");
-        return null;
       } finally {
         inFlight.current = false;
       }
@@ -175,7 +190,19 @@ export default function ControlView({ mode }: { mode: "live" | "test" }) {
   // 추첨 결과 보고: 응모 인원이 부족하면 "완료"로 뭉개지 않고 명시적으로 알린다.
   const runDraw = useCallback(
     async (count: number) => {
-      const d = await call("/api/draw", { count });
+      let d = await call("/api/draw", { count });
+      // 연속 추첨 가드(서버): 직전 추첨 15초 내 재요청 — 새로고침 직후의 이중 클릭이
+      // 아닌지 사람에게 재확인시키고, 의도된 추가 추첨이면 force 로 진행한다.
+      if (d && !d.ok && d.error === "recent_draw") {
+        const ask =
+          `${d.secondsAgo}초 전에 이미 배치 ${d.batch}(${d.count}명) 추첨이 실행되었습니다.\n` +
+          `새로고침 직후라면 중복 실행일 수 있습니다.\n그래도 ${count}명을 추가로 추첨할까요?`;
+        if (!confirm(ask)) {
+          setMsg("추첨 취소됨 — 직전 추첨이 이미 반영되어 있습니다.");
+          return;
+        }
+        d = await call("/api/draw", { count, force: true });
+      }
       if (!d?.ok) return;
       const shortfall = Number(d.shortfall ?? 0);
       if (shortfall > 0) {
