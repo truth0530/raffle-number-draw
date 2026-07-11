@@ -203,8 +203,16 @@ export default function NumbersShow() {
         ch.close();
       };
     }
+    // 실제 무대: 현재 상태를 방송(미리보기 미러용) + 관리자 리모컨의 넘기기 명령을 수신한다.
+    // (프로젝터 창에서 키보드를 못 누르므로 관리자에서 안내/대기 전환을 보낼 수 있게 함)
+    // BroadcastChannel 은 자기 방송을 자신은 안 받으므로 방송↔수신 에코 루프는 없다.
+    const onCmd = (e: MessageEvent) => {
+      if (e.data && typeof e.data.intro === "boolean") setIntro(e.data.intro);
+    };
+    ch.addEventListener("message", onCmd);
     const tick = setInterval(() => ch.postMessage({ intro: introRef.current }), 1500);
     return () => {
+      ch.removeEventListener("message", onCmd);
       clearInterval(tick);
       ch.close();
     };

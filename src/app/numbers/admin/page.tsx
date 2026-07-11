@@ -46,9 +46,31 @@ export default function NumbersAdmin() {
   const askConfirm = useCallback((msg: string, onOk: () => void) => setConfirmBox({ msg, onOk }), []);
   // 슬라이드쇼(무대) 창 상태 — 하트비트로 열림 여부 감지(관리자 새로고침 후에도 정확).
   const [showOpen, setShowOpen] = useState(false);
-  const [previewOn, setPreviewOn] = useState(true);
   const showWinRef = useRef<Window | null>(null);
   const lastAliveRef = useRef(0);
+  // 안내 슬라이드 페이지 넘기기 — 다른 세션이 쓰는 "numberIntroMirror" 채널을 그대로 사용.
+  // 쇼 페이지가 {intro:boolean} 을 듣고 안내(true)/대기(false) 화면을 전환하므로, 관리자는
+  // 이 채널로 명령만 보내면 된다(쇼 코드 수정 없음). 쇼가 1.5초마다 방송하는 현재 상태도 듣는다.
+  const [introShown, setIntroShown] = useState(true);
+  const introChRef = useRef<BroadcastChannel | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined" || !("BroadcastChannel" in window)) return;
+    const ch = new BroadcastChannel("numberIntroMirror");
+    introChRef.current = ch;
+    const h = (e: MessageEvent) => {
+      if (e.data && typeof e.data.intro === "boolean") setIntroShown(e.data.intro);
+    };
+    ch.addEventListener("message", h);
+    return () => {
+      ch.removeEventListener("message", h);
+      ch.close();
+      introChRef.current = null;
+    };
+  }, []);
+  const goSlide = useCallback((intro: boolean) => {
+    introChRef.current?.postMessage({ intro });
+    setIntroShown(intro); // 낙관적 즉시 반영(쇼의 다음 방송으로 재확인됨)
+  }, []);
 
   useEffect(() => {
     const unsub = subscribePresence((m) => {
@@ -150,9 +172,9 @@ export default function NumbersAdmin() {
   return (
     <main style={wrap}>
       {/* 상단 바 — 제목·집계·창 열기·리셋을 한 줄에 */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <h1 style={h1}>번호 추첨 관리자</h1>
-        <div style={{ display: "flex", gap: 12, fontSize: 13, opacity: 0.85, flex: 1, minWidth: 180 }}>
+        <div style={{ display: "flex", gap: 10, fontSize: 12.5, opacity: 0.85, flex: 1, minWidth: 150 }}>
           <span>받음 <b style={{ color: C.received }}>{received}</b></span>
           <span>없음 <b style={{ color: C.absent }}>{absent.length}</b></span>
           <span>대기 <b style={{ color: C.pending }}>{pending}</b></span>
@@ -164,18 +186,15 @@ export default function NumbersAdmin() {
           {showOpen ? "슬라이드쇼 열림 · 앞으로" : "슬라이드쇼 창 열기"}
         </button>
         <button
-          style={{ ...ghostDanger, width: "auto", padding: "9px 12px", fontSize: 13.5, whiteSpace: "nowrap" }}
+          style={{ ...ghostDanger, width: "auto", padding: "8px 11px", fontSize: 13, whiteSpace: "nowrap" }}
           onClick={() => askConfirm("전체 초기화할까요?", () => update(actReset))}
         >
           전체 리셋
         </button>
       </div>
-      <p style={{ fontSize: 12, opacity: 0.45, margin: "4px 0 0" }}>
-        슬라이드쇼 창을 프로젝터로 옮겨 클릭하면 전체화면 · 같은 번호를 다시 탭하면 대기로 되돌아갑니다.
-      </p>
 
       {/* 설정 + 실행 — 한 줄 컨트롤 바 */}
-      <div style={{ ...uiPanel, marginTop: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+      <div style={{ ...uiPanel, padding: "8px 10px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <span style={label}>번호 1~</span>
         <input value={rangeInput} onChange={(e) => setRangeInput(e.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" style={{ ...input, width: 76 }} />
         <span style={label}>뽑기</span>
@@ -217,91 +236,113 @@ export default function NumbersAdmin() {
         </button>
       </div>
 
-      {/* 탭 모드 — 받음/없음 둘뿐. 해제는 같은 번호 재탭으로. */}
-      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10 }}>
-        <span style={label}>번호를 탭하면</span>
-        <button style={modeBtn(mode === "received", C.receivedSolid)} onClick={() => setMode("received")}>받음</button>
-        <button style={modeBtn(mode === "absent", C.absentSolid)} onClick={() => setMode("absent")}>없음</button>
-        <span style={{ ...label, opacity: 0.4 }}>으로 표시</span>
-      </div>
-
-      {/* 번호 그리드 — 남는 세로 공간을 모두 사용, 페이지 스크롤 없음 */}
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", marginTop: 12 }}>
-        {main.length === 0 && !state.drawing ? (
-          <div style={{ opacity: 0.45, fontSize: 14 }}>추첨 전입니다.</div>
-        ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(66px, 1fr))", gap: 8 }}>
-            {main.map((it) => (
-              <button key={it.n} onClick={() => update((s) => actMark(s, it.n, mode))} style={chip(it)}>
-                {it.n}
-                {it.status === "received" && <span style={{ position: "absolute", top: 2, right: 5, fontSize: 11, color: C.received }}>✓</span>}
-              </button>
-            ))}
+      {/* 탭 모드 — 받음/없음 둘뿐. 해제는 같은 번호 재탭으로.
+          추첨 전(마킹할 번호가 없을 때)에는 흐리게·비활성화 — 아직 할 일이 아님을 명확히. */}
+      {(() => {
+        const canMark = main.length > 0;
+        return (
+          <div style={{ display: "flex", gap: 8, alignItems: "center", opacity: canMark ? 1 : 0.45 }}>
+            <span style={label}>번호를 탭하면</span>
+            <button style={modeBtn(mode === "received", C.receivedSolid, !canMark)} disabled={!canMark} onClick={() => setMode("received")}>받음</button>
+            <button style={modeBtn(mode === "absent", C.absentSolid, !canMark)} disabled={!canMark} onClick={() => setMode("absent")}>없음</button>
+            <span style={{ ...label, opacity: 0.4 }}>으로 표시{!canMark && " (추첨 후 사용)"}</span>
           </div>
-        )}
-      </div>
+        );
+      })()}
 
-      {/* 없음 보관함 — 취소선 없이 로즈 톤, 탭하면 대기로 복귀 */}
-      {absent.length > 0 && (
-        <div style={tray}>
-          <div style={trayTitle}>없음 · 교체 대기 {absent.length} — 탭하면 대기로 복귀</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {absent.map((it) => (
-              <button key={it.n} onClick={() => update((s) => actMark(s, it.n, "absent"))} style={trayChip}>
-                {it.n}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 발표자 모드 미리보기 — 청중이 보는 슬라이드쇼 화면을 관리자 화면에 그대로 축소 표시.
-          /numbers/show?preview=1 을 iframe 으로 띄워 같은 상태(localStorage)를 실시간 미러링.
-          preview 모드라 하트비트를 안 보내 "쇼 열림" 오판을 만들지 않는다. */}
-      <div style={pipWrap}>
-        <div style={pipHeader}>
-          <span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700 }}>
-            <span
-              style={{
-                width: 9,
-                height: 9,
-                borderRadius: "50%",
-                background: showOpen ? "#22c55e" : "#6b7280",
-                boxShadow: showOpen ? "0 0 6px #22c55e" : "none",
-              }}
-            />
-            청중 화면 {showOpen ? "· 무대 열림" : "· 무대 창 닫힘"}
-          </span>
-          <button
-            onClick={() => setPreviewOn((v) => !v)}
-            style={{ padding: "3px 9px", fontSize: 12, fontWeight: 700, borderRadius: 7, border: "1px solid #2e2e3a", background: "#20202a", color: "#e4e4ec", cursor: "pointer" }}
-          >
-            {previewOn ? "접기" : "펼치기"}
-          </button>
-        </div>
-        {previewOn && (
-          <div style={{ width: PREVIEW_W, height: PREVIEW_W * (720 / 1280), overflow: "hidden", position: "relative", background: "#0a0a0f" }}>
-            <iframe
-              src="/numbers/show?preview=1"
-              title="청중 화면 미리보기"
-              style={{
-                width: 1280,
-                height: 720,
-                border: 0,
-                transform: `scale(${PREVIEW_W / 1280})`,
-                transformOrigin: "top left",
-                pointerEvents: "none",
-              }}
-            />
-            {!showOpen && (
-              <div style={pipClosedOverlay}>
-                무대 창이 닫혀 있습니다
-                <br />
-                <span style={{ opacity: 0.7, fontWeight: 600, fontSize: 11.5 }}>위 “슬라이드쇼 창 열기”를 누르세요</span>
+      {/* 본문 2단 — 좌: 번호 그리드 · 우: 청중 미리보기(발표자 모드) + 슬라이드 넘기기(위쪽 배치) */}
+      <div style={{ flex: 1, minHeight: 0, display: "flex", gap: 12, marginTop: 10 }}>
+        {/* 좌: 번호 그리드 + 없음 보관함 */}
+        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", minHeight: 0 }}>
+          <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+            {main.length === 0 && !state.drawing ? (
+              <div style={{ opacity: 0.45, fontSize: 14 }}>추첨 전입니다.</div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(64px, 1fr))", gap: 8 }}>
+                {main.map((it) => (
+                  <button key={it.n} onClick={() => update((s) => actMark(s, it.n, mode))} style={chip(it)}>
+                    {it.n}
+                    {it.status === "received" && <span style={{ position: "absolute", top: 2, right: 5, fontSize: 11, color: C.received }}>✓</span>}
+                  </button>
+                ))}
               </div>
             )}
           </div>
-        )}
+          {absent.length > 0 && (
+            <div style={tray}>
+              <div style={trayTitle}>없음 · 교체 대기 {absent.length} — 탭하면 대기로 복귀</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {absent.map((it) => (
+                  <button key={it.n} onClick={() => update((s) => actMark(s, it.n, "absent"))} style={trayChip}>
+                    {it.n}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 우: 청중 미리보기 + 슬라이드 넘기기. /numbers/show?preview=1 iframe 으로 실시간 미러링. */}
+        <div style={{ width: PREVIEW_W, flexShrink: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={pipWrap}>
+            <div style={pipHeader}>
+              <span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700 }}>
+                <span
+                  style={{
+                    width: 9,
+                    height: 9,
+                    borderRadius: "50%",
+                    background: showOpen ? "#22c55e" : "#6b7280",
+                    boxShadow: showOpen ? "0 0 6px #22c55e" : "none",
+                  }}
+                />
+                청중 화면 {showOpen ? "· 무대 열림" : "· 무대 창 닫힘"}
+              </span>
+            </div>
+            <div style={{ width: PREVIEW_W, height: PREVIEW_W * (720 / 1280), overflow: "hidden", position: "relative", background: "#0a0a0f" }}>
+              <iframe
+                src="/numbers/show?preview=1"
+                title="청중 화면 미리보기"
+                style={{
+                  width: 1280,
+                  height: 720,
+                  border: 0,
+                  transform: `scale(${PREVIEW_W / 1280})`,
+                  transformOrigin: "top left",
+                  pointerEvents: "none",
+                }}
+              />
+              {!showOpen && (
+                <div style={pipClosedOverlay}>
+                  무대 창이 닫혀 있습니다
+                  <br />
+                  <span style={{ opacity: 0.7, fontWeight: 600, fontSize: 11.5 }}>위 “슬라이드쇼 창 열기”를 누르세요</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 안내 슬라이드 넘기기 — 대기 상태에서만 의미(추첨을 시작하면 번호 화면이 뜬다) */}
+          <div style={slideBar}>
+            {state.drawing || main.length > 0 ? (
+              <span style={{ width: "100%", textAlign: "center", fontSize: 12.5, opacity: 0.6, fontWeight: 600 }}>
+                번호 추첨 화면 표시 중
+              </span>
+            ) : (
+              <>
+                <button style={slideBtn(!introShown)} disabled={introShown} onClick={() => goSlide(true)}>
+                  ◀ 안내 화면
+                </button>
+                <span style={{ flex: 1, textAlign: "center", fontSize: 13, fontWeight: 800 }}>
+                  {introShown ? "안내 화면" : "추첨 대기"}
+                </span>
+                <button style={slideBtn(introShown)} disabled={!introShown} onClick={() => goSlide(false)}>
+                  추첨 대기 ▶
+                </button>
+              </>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* 페이지 내 확인 모달 — 네이티브 confirm 대체(전체화면 유지) */}
@@ -351,9 +392,10 @@ const wrap: React.CSSProperties = {
   overflow: "hidden",
   display: "flex",
   flexDirection: "column",
-  maxWidth: 980,
+  gap: 8,
+  maxWidth: 1280,
   margin: "0 auto",
-  padding: "14px 20px 16px",
+  padding: "12px 16px 14px",
   color: "#f5f5f7",
 };
 const h1: React.CSSProperties = { fontSize: 19, fontWeight: 800, whiteSpace: "nowrap" };
@@ -369,7 +411,7 @@ const applyBtn: React.CSSProperties = {
   color: "#c9c2ff",
   cursor: "pointer",
 };
-function modeBtn(active: boolean, color: string): React.CSSProperties {
+function modeBtn(active: boolean, color: string, disabled = false): React.CSSProperties {
   return {
     padding: "10px 26px",
     fontSize: 14.5,
@@ -378,7 +420,7 @@ function modeBtn(active: boolean, color: string): React.CSSProperties {
     border: active ? "1px solid transparent" : "1px solid #2a2a35",
     background: active ? color : "transparent",
     color: active ? "#fff" : "#a8a8b6",
-    cursor: "pointer",
+    cursor: disabled ? "default" : "pointer",
   };
 }
 // 번호표 칩 — 색 틴트로만 구분(취소선 없음): 대기(앰버) / 받음(하늘) / 없음(로즈) / 추가(민트)
@@ -418,21 +460,37 @@ const trayChip: React.CSSProperties = {
   border: "1px solid rgba(244,63,94,0.4)",
   cursor: "pointer",
 };
-// 발표자 미리보기(PiP) — 화면 우하단 고정. 번호 그리드를 가리면 "접기"로 숨긴다.
-const PREVIEW_W = 480;
+// 발표자 미리보기 — 본문 우측 열에 배치(플로팅 아님 → 잘림 없음, 위쪽 정렬).
+const PREVIEW_W = 420;
 const pipWrap: React.CSSProperties = {
-  position: "fixed",
-  right: 16,
-  bottom: 16,
-  zIndex: 40,
   width: PREVIEW_W,
-  maxWidth: "calc(100vw - 32px)",
   borderRadius: 12,
   overflow: "hidden",
   border: "1px solid #2e2e3a",
   background: "#15151d",
-  boxShadow: "0 12px 34px rgba(0,0,0,0.55)",
 };
+const slideBar: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  padding: "8px 10px",
+  borderRadius: 12,
+  border: "1px solid #2e2e3a",
+  background: "#15151d",
+};
+function slideBtn(enabled: boolean): React.CSSProperties {
+  return {
+    padding: "9px 12px",
+    fontSize: 13.5,
+    fontWeight: 700,
+    borderRadius: 9,
+    border: "1px solid #2e2e3a",
+    background: enabled ? "#20202a" : "#161620",
+    color: enabled ? "#e4e4ec" : "#565663",
+    cursor: enabled ? "pointer" : "default",
+    whiteSpace: "nowrap",
+  };
+}
 const pipHeader: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
